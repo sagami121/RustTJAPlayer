@@ -10,6 +10,8 @@ mod song_loader;
 mod config;
 mod tja;
 mod score;
+mod measure_jump;
+mod animation;
 
 use crate::songselect::SongSelectApp;
 use crate::gui::RustTJAPlayerApp;
@@ -96,13 +98,18 @@ fn main() {
 
     if songs.is_empty() {
         eprintln!("No songs found in '{}' directory", songs_dir);
-        // Even if empty, we might want to show the app with an error message, 
-        // but for now let's just exit.
         return;
     }
 
+    let config = crate::config::load_config();
+
     // Set up native options for the window.
-    let options = NativeOptions::default();
+    let options = NativeOptions {
+        viewport: egui::ViewportBuilder::default()
+            .with_inner_size([config.window_width as f32, config.window_height as f32]),
+        ..Default::default()
+    };
+
     let _ = eframe::run_native(
         "RustTJAPlayer",
         options,

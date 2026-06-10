@@ -2,9 +2,10 @@ use crate::audio::AudioSystem;
 use crate::input::{GameAction, is_action_pressed};
 use crate::judge::{Judgment, judge_note};
 use crate::models::{NoteType, Note, ActiveRoll};
-use crate::tja::QueryableCourseMetadata;
 use crate::song_loader::SongInfo;
 use crate::utils::resolve_path;
+use crate::measure_jump::MeasureJumpManager;
+use crate::animation::notes::NoteAnimationManager;
 use eframe::egui;
 use std::time::{Duration, Instant};
 use std::sync::Arc;
@@ -23,52 +24,33 @@ pub enum PlayState {
 
 /// Main application state for the TJA player GUI.
 pub struct RustTJAPlayerApp {
-    /// Song information (paths, chart)
     song_info: SongInfo,
-    /// Index of the currently selected course.
     selected_course: usize,
-    /// Audio system.
     audio_system: AudioSystem,
-    /// Playback sink for the background music.
     bgm_sink: Option<rodio::Sink>,
-    /// Tracked BGM samples.
     bgm_samples: Option<Arc<AtomicU64>>,
-    /// BGM sample rate.
     bgm_sample_rate: u32,
-    /// BGM channels.
     bgm_channels: u16,
-    /// Current play state
     pub state: PlayState,
-    /// Whether the music has actually started playing.
     music_started: bool,
-    /// Real-world start time (fallback and for latency compensation)
     wall_start: Instant,
-    /// Current combo count.
     combo: u32,
-    /// Total score.
     score: u32,
-    /// Most recent judgment result.
     last_judgment: Option<Judgment>,
-    /// Index of the next note to be judged in the selected course.
     next_note_idx: usize,
-    /// Scroll speed in pixels per millisecond.
     scroll_speed: f32,
-    /// X position of the judgment line.
     judgment_line_x: f32,
-
-    // Pre-loaded and decoded sound sources (buffered for instant playback)
     dong_source: Option<Buffered<Decoder<BufReader<File>>>>,
     ka_source: Option<Buffered<Decoder<BufReader<File>>>>,
-
-    /// Auto play flag
     is_autoplay: bool,
-
-    /// Flag to signal return to song select
+    chart_create_mode: bool,
     pub exit_requested: bool,
-    /// Active roll currently being processed
     pub active_roll: Option<ActiveRoll>,
-    /// Last time an autoplay roll hit was triggered
     pub last_roll_hit_time_ms: f64,
+    pub measure_jump: MeasureJumpManager,
+    pub note_animation_manager: NoteAnimationManager,
+    pub soul_value: f32,
+    pub max_soul_value: f32,
 }
 
 impl RustTJAPlayerApp {
@@ -86,6 +68,14 @@ impl RustTJAPlayerApp {
         let dong_source = dong_path.and_then(|p| audio_system.load_cached_sound(&p));
         let ka_source = ka_path.and_then(|p| audio_system.load_cached_sound(&p));
 
+        let config = crate::config::load_config();
+        let is_autoplay = config.auto_play;
+        let chart_create_mode = config.chart_create_mode;
+        
+        let course = song_info.chart.course_metadata.get(selected_course);
+        let total_measures = course.map(|c| c.bar_lines.len()).unwrap_or(1);
+        let note_count = course.map(|c| c.notes.iter().filter(|n| matches!(n.note_type, NoteType::Don | NoteType::Ka | NoteType::DonBig | NoteType::KaBig)).count()).unwrap_or(1);
+
         Self {
             song_info,
             selected_course,
@@ -101,22 +91,61 @@ impl RustTJAPlayerApp {
             score: 0,
             last_judgment: None,
             next_note_idx: 0,
-            scroll_speed: 0.6,
+            scroll_speed: 1.0,
             judgment_line_x: 200.0,
             dong_source,
             ka_source,
-            is_autoplay: crate::config::load_config().auto_play,
+            is_autoplay,
+            chart_create_mode,
             exit_requested: false,
             active_roll: None,
             last_roll_hit_time_ms: 0.0,
+            measure_jump: MeasureJumpManager::new(total_measures),
+            note_animation_manager: NoteAnimationManager::new(),
+            soul_value: 0.0,
+            max_soul_value: note_count as f32,
         }
     }
-
-    fn selected_course(&self) -> Option<&QueryableCourseMetadata> {
+    fn selected_course(&self) -> Option<&crate::tja::QueryableCourseMetadata> {
         self.song_info.chart.course_metadata.get(self.selected_course)
     }
 
-    /// Returns current playback time in milliseconds.
+    fn get_time_at_measure(&self, measure: f32) -> f64 {
+        if let Some(course) = self.selected_course() {
+            let m1 = measure.floor() as usize;
+            let m2 = measure.ceil() as usize;
+            
+            let t1 = course.bar_lines.get(m1).map(|b| b.time_ms).unwrap_or(0.0);
+            if m1 == m2 { return t1; }
+            let t2 = course.bar_lines.get(m2).map(|b| b.time_ms).unwrap_or(t1);
+            
+            t1 + (t2 - t1) * (measure - m1 as f32) as f64
+        } else {
+            0.0
+        }
+    }
+
+    fn jump_to_measure(&mut self, measure: usize) {
+        let params = if let Some(course) = self.selected_course() {
+            if let Some(bar) = course.bar_lines.get(measure) {
+                let target_time = bar.time_ms;
+                let measure_length = course.bar_lines.get(measure + 1).map(|b| b.time_ms - target_time).unwrap_or(2000.0);
+                let next_note_idx = course.notes.iter().position(|n| n.time_ms >= target_time - measure_length).unwrap_or(course.notes.len());
+                Some((target_time, measure_length, next_note_idx))
+            } else { None }
+        } else { None };
+
+        if let Some((target_time, measure_length, next_note_idx)) = params {
+            self.wall_start = Instant::now() - Duration::from_millis((target_time - measure_length).max(0.0) as u64);
+            self.next_note_idx = next_note_idx;
+            
+            if let Some(ref sink) = self.bgm_sink { sink.stop(); }
+            self.bgm_sink = None;
+            self.music_started = false;
+            self.active_roll = None;
+        }
+    }
+
     fn current_time_ms(&self) -> f64 {
         if self.state == PlayState::Ready {
             return -START_DELAY_MS;
@@ -138,21 +167,28 @@ impl RustTJAPlayerApp {
     fn maybe_start_playback(&mut self) {
         if self.state == PlayState::Playing && !self.music_started {
             let current_ms = self.current_time_ms();
-            if current_ms >= 0.0 {
-                if let Some(ref audio_path) = self.song_info.audio_path {
-                    if let Some((sink, counter, rate, channels)) = self.audio_system.play_tracked_file(audio_path) {
-                        self.bgm_sink = Some(sink);
-                        self.bgm_samples = Some(counter);
-                        self.bgm_sample_rate = rate;
-                        self.bgm_channels = channels;
-                        
-                        if let Some(ref s) = self.bgm_sink {
-                            let vol = self.song_info.chart.bgm_vol as f32 / 100.0;
-                            s.set_volume(vol);
+            let measure = self.measure_jump.current_measure().round() as usize;
+            
+            let target_time = self.song_info.chart.course_metadata.get(self.selected_course)
+                .and_then(|c| c.bar_lines.get(measure)).map(|b| b.time_ms);
+
+            if let Some(target_time) = target_time {
+                if current_ms >= target_time {
+                    let audio_path = self.song_info.audio_path.clone();
+                    if let Some(audio_path) = audio_path {
+                        if let Some((sink, counter, rate, channels)) = self.audio_system.play_tracked_file(&audio_path) {
+                            self.bgm_sink = Some(sink);
+                            self.bgm_samples = Some(counter);
+                            self.bgm_sample_rate = rate;
+                            self.bgm_channels = channels;
+                            if let Some(ref s) = self.bgm_sink {
+                                s.set_volume(self.song_info.chart.bgm_vol as f32 / 100.0);
+                                s.try_seek(Duration::from_millis(target_time.max(0.0) as u64)).ok();
+                            }
                         }
                     }
+                    self.music_started = true;
                 }
-                self.music_started = true;
             }
         }
     }
@@ -174,8 +210,18 @@ impl RustTJAPlayerApp {
         if judgment.is_hit() {
             self.combo += 1;
             self.score += judgment.score();
+            
+            // 魂ゲージの加算
+            let increment = match judgment {
+                Judgment::Perfect => 1.0,
+                Judgment::Good => 0.5,
+                _ => 0.0,
+            };
+            self.soul_value = (self.soul_value + increment).min(self.max_soul_value);
         } else {
             self.combo = 0;
+            // 魂ゲージの減算 (ミス)
+            self.soul_value = (self.soul_value - 1.0).max(0.0);
         }
         self.last_judgment = Some(judgment);
         self.next_note_idx += 1;
@@ -184,19 +230,49 @@ impl RustTJAPlayerApp {
 
 impl eframe::App for RustTJAPlayerApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        let screen_rect = ctx.screen_rect();
+        let lane_y = screen_rect.center().y;
+        
+        // 魂ゲージの位置設定 (画面上部、判定線より右側)
+        let gauge_rect = egui::Rect::from_min_max(
+            screen_rect.left_top() + egui::vec2(self.judgment_line_x + 50.0, 80.0),
+            screen_rect.left_top() + egui::vec2(screen_rect.width() - 50.0, 105.0)
+        );
+        let soul_progress = if self.max_soul_value > 0.0 { (self.soul_value / self.max_soul_value).clamp(0.0, 1.0) } else { 0.0 };
+        let soul_tip_pos = egui::pos2(
+            gauge_rect.left() + gauge_rect.width() * soul_progress,
+            gauge_rect.center().y
+        );
+
         if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
             if let Some(sink) = &self.bgm_sink {
                 sink.stop();
             }
-            crate::config::save_config(self.is_autoplay);
+            crate::config::save_config(self.is_autoplay, self.chart_create_mode, 1280, 720);
             self.exit_requested = true;
             return;
         }
 
-        if self.state == PlayState::Ready {
+        if ctx.input(|i| i.key_pressed(egui::Key::Q)) {
+            if let Some(sink) = &self.bgm_sink {
+                sink.stop();
+            }
+            self.bgm_sink = None;
+            self.music_started = false;
+            self.state = PlayState::Ready;
+            self.combo = 0;
+            self.score = 0;
+            self.soul_value = 0.0;
+            self.last_judgment = None;
+            self.active_roll = None;
+            self.next_note_idx = 0;
+        }
+
+        if self.state == PlayState::Ready && self.chart_create_mode {
             if ctx.input(|i| i.key_pressed(egui::Key::Space)) {
+                let measure = self.measure_jump.current_measure().round() as usize;
+                self.jump_to_measure(measure);
                 self.state = PlayState::Playing;
-                self.wall_start = Instant::now();
             }
         }
 
@@ -204,24 +280,43 @@ impl eframe::App for RustTJAPlayerApp {
 
         if ctx.input(|i| i.key_pressed(egui::Key::F1)) {
             self.is_autoplay = !self.is_autoplay;
-            crate::config::save_config(self.is_autoplay);
+            crate::config::save_config(self.is_autoplay, self.chart_create_mode, 1280, 720);
         }
 
-        let current_ms = self.current_time_ms();
+        if ctx.input(|i| i.key_pressed(egui::Key::PageUp)) {
+            self.measure_jump.move_relative(-1);
+            self.jump_to_measure(self.measure_jump.target_measure());
+        }
+        if ctx.input(|i| i.key_pressed(egui::Key::PageDown)) {
+            self.measure_jump.move_relative(1);
+            self.jump_to_measure(self.measure_jump.target_measure());
+        }
+        if ctx.input(|i| i.key_pressed(egui::Key::Home)) {
+            self.measure_jump.jump_to(0);
+            self.jump_to_measure(self.measure_jump.target_measure());
+        }
+        if ctx.input(|i| i.key_pressed(egui::Key::End)) {
+            self.measure_jump.jump_to(self.measure_jump.total_measures() - 1);
+            self.jump_to_measure(self.measure_jump.target_measure());
+        }
 
-        // 2. Process Notes
+        self.measure_jump.update(ctx.input(|i| i.stable_dt));
+
+        let current_ms = if self.state == PlayState::Playing {
+            self.current_time_ms()
+        } else {
+            self.get_time_at_measure(self.measure_jump.current_measure())
+        };
+
         if self.state == PlayState::Playing {
-            // Expire active roll if it ended
             if let Some(ref active_roll) = self.active_roll {
                 if current_ms > active_roll.end_time_ms {
                     self.active_roll = None;
                 }
             }
 
-            // Handle Active Roll Inputs
             if let Some(ref mut active_roll) = self.active_roll {
                 if self.is_autoplay {
-                    // Simulate rolling (16th note equivalent: ~60ms gap)
                     if current_ms - self.last_roll_hit_time_ms > 60.0 {
                         active_roll.count += 1;
                         if let Some(ref src) = self.dong_source { self.audio_system.play_cached(src); }
@@ -249,7 +344,6 @@ impl eframe::App for RustTJAPlayerApp {
             } else {
                 let mut loop_count = 0;
                 loop {
-                    // Prevent infinite loop if something goes wrong
                     loop_count += 1;
                     if loop_count > 100 { break; }
 
@@ -260,7 +354,6 @@ impl eframe::App for RustTJAPlayerApp {
                     };
 
                     if let Some(note) = note_info {
-                        // Check if it's a Roll/Balloon
                         if matches!(note.note_type, NoteType::Roll | NoteType::RollBig | NoteType::Balloon) {
                             if current_ms >= note.time_ms {
                                 if let Some(end_time_ms) = note.end_time_ms {
@@ -284,6 +377,9 @@ impl eframe::App for RustTJAPlayerApp {
                                     _ => None,
                                 };
                                 if let Some(act) = action {
+                                    let is_don = matches!(note.note_type, NoteType::Don | NoteType::DonBig);
+                                    let start_pos = egui::Pos2::new(self.judgment_line_x, lane_y);
+                                    self.note_animation_manager.spawn_soul(is_don, start_pos, soul_tip_pos);
                                     self.process_hit(act, Judgment::Perfect);
                                 } else {
                                     self.next_note_idx += 1;
@@ -294,6 +390,7 @@ impl eframe::App for RustTJAPlayerApp {
                             if current_ms > note.time_ms + 150.0 {
                                 self.combo = 0;
                                 self.last_judgment = Some(Judgment::Miss);
+                                self.soul_value = (self.soul_value - 1.0).max(0.0);
                                 self.next_note_idx += 1;
                                 continue;
                             } else {
@@ -311,6 +408,8 @@ impl eframe::App for RustTJAPlayerApp {
                                     };
 
                                     if valid_hit {
+                                        let start_pos = egui::Pos2::new(self.judgment_line_x, lane_y);
+                                        self.note_animation_manager.spawn_soul(is_don, start_pos, soul_tip_pos);
                                         let judgment = judge_note(current_ms, note.time_ms, 150.0);
                                         if judgment != Judgment::Miss || current_ms > note.time_ms {
                                             self.process_hit(action, judgment);
@@ -330,11 +429,16 @@ impl eframe::App for RustTJAPlayerApp {
             }
         }
 
-        // 3. Render UI
         egui::TopBottomPanel::top("info_panel").show(ctx, |ui| {
             ui.horizontal(|ui| {
                 let title = if self.song_info.chart.title.is_empty() { "Unknown" } else { &self.song_info.chart.title };
                 ui.label(egui::RichText::new(title).size(24.0).strong());
+                ui.separator();
+                ui.label(egui::RichText::new(format!(
+                    "MEASURE: {:03}/{:03}",
+                    self.measure_jump.current_measure().round() as usize,
+                    self.measure_jump.total_measures()
+                )).size(20.0));
                 ui.separator();
                 ui.label(egui::RichText::new(format!("Combo: {}", self.combo)).size(20.0).color(egui::Color32::YELLOW));
                 ui.separator();
@@ -356,7 +460,16 @@ impl eframe::App for RustTJAPlayerApp {
             let (rect, _) = ui.allocate_exact_size(ui.available_size(), egui::Sense::hover());
             let painter = ui.painter_at(rect);
 
-            let lane_y = rect.center().y;
+            // 魂ゲージの描画
+            painter.rect_filled(gauge_rect, 5.0, egui::Color32::from_gray(50));
+            let current_gauge_rect = egui::Rect::from_min_max(
+                gauge_rect.left_top(),
+                egui::pos2(soul_tip_pos.x, gauge_rect.bottom())
+            );
+            let gauge_color = if soul_progress >= 1.0 { egui::Color32::GOLD } else { egui::Color32::from_rgb(255, 100, 100) };
+            painter.rect_filled(current_gauge_rect, 5.0, gauge_color);
+            painter.rect_stroke(gauge_rect, 5.0, (2.0, egui::Color32::WHITE));
+
             let lane_height = 80.0;
             painter.rect_filled(
                 egui::Rect::from_x_y_ranges(rect.x_range(), (lane_y - lane_height/2.0)..=(lane_y + lane_height/2.0)),
@@ -372,16 +485,31 @@ impl eframe::App for RustTJAPlayerApp {
 
             if let Some(course) = self.selected_course() {
                 let start_draw_idx = if self.next_note_idx > 10 { self.next_note_idx - 10 } else { 0 };
+
+                for bar in &course.bar_lines {
+                    let dt = bar.time_ms - current_ms;
+                    let diff_sec = dt / 1000.0;
+                    if diff_sec < -0.5 || diff_sec > 2.5 { continue; }
+
+                    const BASE_PPS: f64 = 400.0;
+                    let x = line_x + (diff_sec * BASE_PPS * self.scroll_speed as f64 * bar.scroll_factor) as f32;
+                    painter.line_segment(
+                        [egui::Pos2::new(x, lane_y - lane_height / 2.0), egui::Pos2::new(x, lane_y + lane_height / 2.0)],
+                        egui::Stroke::new(1.0, egui::Color32::from_gray(80)),
+                    );
+                }
                 
                 for i in start_draw_idx..course.notes.len() {
                     let note = &course.notes[i];
                     let dt = note.time_ms - current_ms;
                     let diff_sec = dt / 1000.0;
+
+                    if diff_sec < -0.5 || diff_sec > 2.5 { continue; }
+                    
                     const BASE_PIXELS_PER_SECOND: f64 = 400.0;
                     let scroll_factor = self.scroll_speed as f64 * note.scroll_factor as f64;
                     let x = line_x + ((diff_sec * BASE_PIXELS_PER_SECOND * scroll_factor) as f32);
                     
-                    if x > rect.max.x + 100.0 { break; } 
                     let mut end_x = x;
                     if let Some(end_time_ms) = note.end_time_ms {
                         let end_dt = end_time_ms - current_ms;
@@ -389,9 +517,6 @@ impl eframe::App for RustTJAPlayerApp {
                         end_x = line_x + ((end_diff_sec * BASE_PIXELS_PER_SECOND * scroll_factor) as f32);
                     }
 
-                    if end_x < rect.min.x - 100.0 { continue; }
-
-                    // Draw Roll Band
                     if matches!(note.note_type, NoteType::Roll | NoteType::RollBig | NoteType::Balloon) {
                         if note.end_time_ms.is_some() {
                             let band_height = if matches!(note.note_type, NoteType::RollBig) { 50.0 } else { 30.0 };
@@ -400,9 +525,9 @@ impl eframe::App for RustTJAPlayerApp {
                                 egui::Pos2::new(end_x, lane_y + band_height / 2.0),
                             );
                             let color = if note.note_type == NoteType::Balloon {
-                                egui::Color32::from_rgb(255, 100, 100) // Reddish for balloon
+                                egui::Color32::from_rgb(255, 100, 100)
                             } else {
-                                egui::Color32::from_rgb(255, 200, 50) // Yellow for roll
+                                egui::Color32::from_rgb(255, 200, 50)
                             };
                             painter.rect_filled(band_rect, 15.0, color);
                             painter.rect_stroke(band_rect, 15.0, (2.0, egui::Color32::BLACK));
@@ -427,7 +552,7 @@ impl eframe::App for RustTJAPlayerApp {
                 }
             }
 
-            if self.state == PlayState::Ready {
+            if self.state == PlayState::Ready && self.chart_create_mode {
                 painter.text(
                     rect.center(),
                     egui::Align2::CENTER_CENTER,
@@ -436,9 +561,9 @@ impl eframe::App for RustTJAPlayerApp {
                     egui::Color32::WHITE,
                 );
             }
+            self.note_animation_manager.update_and_draw(ui);
         });
 
-        // Request repaint after a short delay to keep the loop alive without hogging CPU
         ctx.request_repaint_after(Duration::from_millis(2));
     }
 }

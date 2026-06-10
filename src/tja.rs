@@ -111,6 +111,7 @@ pub struct QueryableCourseMetadata {
     pub course_type: String,
     pub balloon: Vec<u32>,
     pub notes: Vec<crate::models::Note>,
+    pub bar_lines: Vec<crate::models::BarLine>,
 }
 
 #[derive(Debug, Clone)]
@@ -185,6 +186,7 @@ impl Default for Tja {
                 course_type: String::new(),
                 balloon: Vec::new(),
                 notes: Vec::new(),
+                bar_lines: Vec::new(),
             },
             global_custom_metadata: HashMap::new(),
             title: String::new(),

@@ -52,7 +52,14 @@ pub struct Note {
     pub time_ms: f64,
     pub end_time_ms: Option<f64>,
     pub balloon_count: Option<u32>,
-    // Scroll multiplier captured at note creation time
+    /// Scroll multiplier baked in at parse time (never changes after parsing)
+    pub scroll_factor: f64,
+}
+
+/// A measure bar line with its own scroll_factor baked in at parse time.
+#[derive(Debug, Clone, PartialEq)]
+pub struct BarLine {
+    pub time_ms: f64,
     pub scroll_factor: f64,
 }
 

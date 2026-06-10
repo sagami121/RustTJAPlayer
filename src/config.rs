@@ -6,11 +6,19 @@ const CONFIG_FILE: &str = "config.ini";
 #[derive(Debug, Clone)]
 pub struct AppConfig {
     pub auto_play: bool,
+    pub chart_create_mode: bool,
+    pub window_width: u32,
+    pub window_height: u32,
 }
 
 impl Default for AppConfig {
     fn default() -> Self {
-        Self { auto_play: false }
+        Self { 
+            auto_play: false,
+            chart_create_mode: false,
+            window_width: 1280,
+            window_height: 720,
+        }
     }
 }
 
@@ -20,10 +28,15 @@ pub fn load_config() -> AppConfig {
         if let Ok(contents) = fs::read_to_string(CONFIG_FILE) {
             for line in contents.lines() {
                 let line = line.trim();
-                if line.starts_with("auto_play") {
-                    if let Some((_, val)) = line.split_once('=') {
-                        let val = val.trim().to_lowercase();
-                        config.auto_play = val == "true" || val == "1";
+                if let Some((key, val)) = line.split_once('=') {
+                    let key = key.trim();
+                    let val = val.trim().to_lowercase();
+                    match key {
+                        "auto_play" => config.auto_play = val == "true" || val == "1",
+                        "chart_create_mode" => config.chart_create_mode = val == "true" || val == "1",
+                        "window_width" => config.window_width = val.parse().unwrap_or(1280),
+                        "window_height" => config.window_height = val.parse().unwrap_or(720),
+                        _ => {}
                     }
                 }
             }
@@ -32,50 +45,14 @@ pub fn load_config() -> AppConfig {
     config
 }
 
-pub fn save_config(auto_play: bool) {
-    let contents = if Path::new(CONFIG_FILE).exists() {
-        fs::read_to_string(CONFIG_FILE).unwrap_or_default()
-    } else {
-        String::new()
-    };
+pub fn save_config(auto_play: bool, chart_create_mode: bool, window_width: u32, window_height: u32) {
+    let mut lines = Vec::new();
+    lines.push("[Game]".to_string());
+    lines.push(format!("auto_play = {}", auto_play));
+    lines.push(format!("chart_create_mode = {}", chart_create_mode));
+    lines.push(format!("window_width = {}", window_width));
+    lines.push(format!("window_height = {}", window_height));
 
-    let mut lines: Vec<String> = contents.lines().map(|s| s.to_string()).collect();
-    let mut game_section_found = false;
-    let mut key_found = false;
-
-    let target_val = if auto_play { "true" } else { "false" };
-    let new_line = format!("auto_play = {}", target_val);
-
-    let mut i = 0;
-    while i < lines.len() {
-        let line = lines[i].trim();
-        if line == "[Game]" {
-            game_section_found = true;
-        } else if line.starts_with('[') && game_section_found {
-            if !key_found {
-                lines.insert(i, new_line.clone());
-                key_found = true;
-            }
-            break;
-        } else if game_section_found && line.starts_with("auto_play") {
-            lines[i] = new_line.clone();
-            key_found = true;
-            break;
-        }
-        i += 1;
-    }
-
-    if !game_section_found {
-        if !lines.is_empty() && !lines.last().unwrap().is_empty() {
-            lines.push(String::new());
-        }
-        lines.push("[Game]".to_string());
-        lines.push(new_line.clone());
-    } else if !key_found {
-        lines.push(new_line.clone());
-    }
-
-    let mut out = lines.join("\n");
-    out.push('\n');
+    let out = lines.join("\n");
     let _ = fs::write(CONFIG_FILE, out);
 }

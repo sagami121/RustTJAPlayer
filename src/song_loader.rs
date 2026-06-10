@@ -1,13 +1,14 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 use crate::parser::parse;
-use crate::models::TjaChart;
+use crate::tja::Tja;
 use encoding_rs::SHIFT_JIS;
 
 /// Song information with file paths
 #[derive(Clone, Debug)]
 pub struct SongInfo {
-    pub chart: TjaChart,
+    pub chart: Tja,
+    #[allow(dead_code)]
     pub tja_path: PathBuf,
     pub audio_path: Option<PathBuf>,
 }
@@ -17,7 +18,6 @@ use crate::utils::resolve_path;
 /// Load all songs from the songs directory
 pub fn load_songs_from_directory(songs_dir: &str) -> Vec<SongInfo> {
     let mut songs = Vec::new();
-    // Resolve songs directory robustly
     let path = resolve_path(songs_dir);
 
     if path.is_none() {
@@ -26,12 +26,10 @@ pub fn load_songs_from_directory(songs_dir: &str) -> Vec<SongInfo> {
     }
     let path = path.unwrap();
 
-    // Scan for .tja files
     match fs::read_dir(path) {
         Ok(entries) => {
             for entry in entries.flatten() {
                 let entry_path = entry.path();
-                
                 if let Some(ext) = entry_path.extension() {
                     if ext == "tja" {
                         if let Some(song_info) = load_song(&entry_path) {
@@ -47,12 +45,9 @@ pub fn load_songs_from_directory(songs_dir: &str) -> Vec<SongInfo> {
     songs
 }
 
-/// Load a single TJA file
 fn load_song(tja_path: &Path) -> Option<SongInfo> {
-    // Read TJA file content as bytes so we can try multiple encodings
     let bytes = fs::read(tja_path).ok()?;
 
-    // Try UTF-8 first, then fall back to Shift_JIS (common on Windows)
     let content = match String::from_utf8(bytes.clone()) {
         Ok(s) => s,
         Err(_) => {
@@ -61,41 +56,33 @@ fn load_song(tja_path: &Path) -> Option<SongInfo> {
         }
     };
 
-    // Parse TJA data
     let chart = parse(&content);
-    
-    // Determine audio file path
-    let audio_path = if let Some(wave_name) = &chart.header.wave {
+
+    // Determine audio file path from bgm_path field
+    let audio_path = if !chart.bgm_path.is_empty() {
         let mut audio_file = tja_path.parent()?.to_path_buf();
-        audio_file.push(wave_name);
-        
-        // Check if file exists
+        audio_file.push(&chart.bgm_path);
+
         if audio_file.exists() {
             Some(audio_file)
         } else {
-            // Try different extensions if not found
             let stem = audio_file.file_stem()?;
             let parent = audio_file.parent()?;
-            
             let alternatives = vec![
                 parent.join(format!("{}.ogg", stem.to_string_lossy())),
                 parent.join(format!("{}.wav", stem.to_string_lossy())),
                 parent.join(format!("{}.mp3", stem.to_string_lossy())),
             ];
-            
             alternatives.into_iter().find(|p| p.exists())
         }
     } else {
-        // Try to find audio file with same name as TJA
         let stem = tja_path.file_stem()?;
         let parent = tja_path.parent()?;
-        
         let alternatives = vec![
             parent.join(format!("{}.ogg", stem.to_string_lossy())),
             parent.join(format!("{}.wav", stem.to_string_lossy())),
             parent.join(format!("{}.mp3", stem.to_string_lossy())),
         ];
-        
         alternatives.into_iter().find(|p| p.exists())
     };
 
@@ -107,17 +94,17 @@ fn load_song(tja_path: &Path) -> Option<SongInfo> {
 }
 
 /// Get a list of all available songs
+#[allow(dead_code)]
 pub fn get_available_songs(songs_dir: &str) -> Vec<String> {
     let songs = load_songs_from_directory(songs_dir);
     songs
         .iter()
         .map(|song| {
-            song.chart
-                .header
-                .title
-                .as_deref()
-                .unwrap_or("Unknown Song")
-                .to_string()
+            if song.chart.title.is_empty() {
+                "Unknown Song".to_string()
+            } else {
+                song.chart.title.clone()
+            }
         })
         .collect()
 }

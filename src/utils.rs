@@ -4,12 +4,14 @@ use std::env;
 /// Utility functions for TJA parsing and timing calculations.
 
 /// Returns the duration of a single beat in milliseconds.
+#[allow(dead_code)]
 pub fn beat_duration_ms(bpm: f64) -> f64 {
     60000.0 / bpm
 }
 
 /// Returns the duration of a full measure in milliseconds,
 /// given the number of beats in the measure (usually 4.0).
+#[allow(dead_code)]
 pub fn measure_duration_ms(bpm: f64, measure_beats: f64) -> f64 {
     (60000.0 / bpm) * measure_beats
 }

@@ -38,12 +38,11 @@ impl SongSelectApp {
             .iter()
             .enumerate()
             .map(|(idx, song_info)| {
-                song_info
-                    .chart
-                    .header
-                    .title
-                    .clone()
-                    .unwrap_or_else(|| format!("Song {}", idx))
+                if song_info.chart.title.is_empty() {
+                    format!("Song {}", idx)
+                } else {
+                    song_info.chart.title.clone()
+                }
             })
             .collect()
     }
@@ -75,7 +74,7 @@ impl SongSelectApp {
             }
             SongSelectState::SelectingDifficulty => {
                 let song = &self.songs[self.selected_index];
-                let course_count = song.chart.courses.len();
+                let course_count = song.chart.course_metadata.len();
                 if course_count == 0 {
                     self.state = SongSelectState::SelectingSong;
                     return;
@@ -162,7 +161,7 @@ impl eframe::App for SongSelectApp {
 
                     let song = &self.songs[self.selected_index];
                     let popup_width = 300.0;
-                    let popup_height = (song.chart.courses.len() as f32 * 40.0) + 60.0;
+                    let popup_height = (song.chart.course_metadata.len() as f32 * 40.0) + 60.0;
                     let popup_rect = egui::Rect::from_center_size(screen_rect.center(), egui::vec2(popup_width, popup_height));
                     
                     painter.rect_filled(popup_rect, 5.0, egui::Color32::from_rgb(20, 20, 20));
@@ -176,13 +175,13 @@ impl eframe::App for SongSelectApp {
                         egui::Color32::YELLOW,
                     );
 
-                    for (i, course) in song.chart.courses.iter().enumerate() {
+                    for (i, course) in song.chart.course_metadata.iter().enumerate() {
                         let y = popup_rect.top() + 60.0 + (i as f32 * 40.0);
                         let is_selected = i == self.selected_difficulty_index;
                         
-                        let name = course.course_type.as_deref().unwrap_or("Unknown");
-                        let level = course.level.unwrap_or(0);
-                        let text = format!("{}  {}", name, "★".repeat(level as usize));
+                        let name = &course.course_type;
+                        let level = course.level_taiko.max(0) as usize;
+                        let text = format!("{}  {}", name, "★".repeat(level.min(10)));
                         
                         let color = if is_selected { egui::Color32::RED } else { egui::Color32::WHITE };
                         let font_id = egui::FontId::new(18.0, egui::FontFamily::Proportional);

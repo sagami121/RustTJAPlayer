@@ -7,9 +7,12 @@ mod judge;
 mod input;
 mod songselect;
 mod song_loader;
+mod config;
+mod tja;
+mod score;
 
 use crate::songselect::SongSelectApp;
-use crate::gui::TjaPlayerApp;
+use crate::gui::RustTJAPlayerApp;
 use crate::song_loader::{load_songs_from_directory, SongInfo};
 use eframe::{egui, NativeOptions};
 use std::fs;
@@ -21,7 +24,7 @@ struct ManagerApp {
 
 enum AppState {
     SongSelect(SongSelectApp),
-    Playing(TjaPlayerApp),
+    Playing(RustTJAPlayerApp),
 }
 
 impl ManagerApp {
@@ -40,7 +43,7 @@ impl eframe::App for ManagerApp {
                 app.update(ctx, frame);
                 if app.confirmed {
                     if let Some(song_info) = app.songs.get(app.selected_index) {
-                        let game_app = TjaPlayerApp::new(song_info.clone(), app.selected_difficulty_index);
+                        let game_app = RustTJAPlayerApp::new(song_info.clone(), app.selected_difficulty_index);
                         self.state = AppState::Playing(game_app);
                     }
                 }
@@ -101,7 +104,7 @@ fn main() {
     // Set up native options for the window.
     let options = NativeOptions::default();
     let _ = eframe::run_native(
-        "TjaPlayer",
+        "RustTJAPlayer",
         options,
         Box::new(|cc| {
             // Start with the manager app

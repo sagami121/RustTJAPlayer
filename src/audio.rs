@@ -1,6 +1,7 @@
 use std::fs::File;
 use std::io::{BufReader, Cursor, Read};
 use rodio::{Decoder, OutputStream, OutputStreamHandle, Sink, Source, Sample};
+use rodio::source::Buffered;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
@@ -28,6 +29,7 @@ impl<S: Source> Source for TrackedSource<S> where S::Item: Sample {
     fn sample_rate(&self) -> u32 { self.inner.sample_rate() }
     fn total_duration(&self) -> Option<Duration> { self.inner.total_duration() }
 }
+
 
 /// Audio module for playing audio files using rodio.
 pub struct AudioSystem {
@@ -71,6 +73,7 @@ impl AudioSystem {
     }
 
     /// Load sound data into memory.
+    #[allow(dead_code)]
     pub fn load_sound(&self, path: &std::path::Path) -> Option<Arc<Vec<u8>>> {
         let mut file = File::open(path).ok()?;
         let mut buffer = Vec::new();
@@ -78,7 +81,25 @@ impl AudioSystem {
         Some(Arc::new(buffer))
     }
 
+    /// Load and decode a sound fully into memory, buffered for instant playback.
+    pub fn load_cached_sound(&self, path: &std::path::Path) -> Option<Buffered<Decoder<BufReader<File>>>> {
+        let file = File::open(path).ok()?;
+        let source = Decoder::new(BufReader::new(file)).ok()?;
+        // Buffer the decoded source so we can clone and play instantly without further decoding.
+        Some(source.buffered())
+    }
+
+    /// Play a pre‑cached, decoded sound source.
+    pub fn play_cached(&self, source: &Buffered<Decoder<BufReader<File>>>) {
+        if let Ok(sink) = Sink::try_new(&self.stream_handle) {
+            sink.set_volume(self.se_volume);
+            sink.append(source.clone());
+            sink.detach();
+        }
+    }
+
     /// Play a sound from memory buffer.
+    #[allow(dead_code)]
     pub fn play_buffer(&self, buffer: Arc<Vec<u8>>) {
         let data: &[u8] = &buffer;
         let cursor = Cursor::new(data.to_vec());

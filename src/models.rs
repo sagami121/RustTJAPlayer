@@ -9,11 +9,12 @@ pub enum NoteType {
     KaBig = 4,
     Roll = 5,
     RollBig = 6,
-    Balloon = 7,
-    End = 8,
+    End = 7,
+    Balloon = 8,
 }
 
 impl NoteType {
+    #[allow(dead_code)]
     pub fn from_u8(val: u8) -> Option<Self> {
         match val {
             1 => Some(NoteType::Don),
@@ -22,8 +23,8 @@ impl NoteType {
             4 => Some(NoteType::KaBig),
             5 => Some(NoteType::Roll),
             6 => Some(NoteType::RollBig),
-            7 => Some(NoteType::Balloon),
-            8 => Some(NoteType::End),
+            7 => Some(NoteType::End),
+            8 => Some(NoteType::Balloon),
             _ => None,
         }
     }
@@ -49,10 +50,21 @@ impl fmt::Display for NoteType {
 pub struct Note {
     pub note_type: NoteType,
     pub time_ms: f64,
+    pub end_time_ms: Option<f64>,
+    pub balloon_count: Option<u32>,
     // Scroll multiplier captured at note creation time
     pub scroll_factor: f64,
 }
 
+pub struct ActiveRoll {
+    pub note_type: NoteType,
+    #[allow(dead_code)]
+    pub start_time_ms: f64,
+    pub end_time_ms: f64,
+    pub count: u32,
+}
+
+#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct TjaHeader {
     pub title: Option<String>,
@@ -62,7 +74,7 @@ pub struct TjaHeader {
     pub demostart: Option<f64>,
     pub songvol: u32,
     pub sevol: u32,
-    pub level: Option<u32>, // Global level
+    pub level: Option<u32>,
 }
 
 impl Default for TjaHeader {
@@ -80,6 +92,7 @@ impl Default for TjaHeader {
     }
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct CourseData {
     pub course_type: Option<String>,
@@ -103,6 +116,7 @@ impl Default for CourseData {
     }
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct TjaChart {
     pub header: TjaHeader,
@@ -121,8 +135,8 @@ mod tests {
         assert_eq!(NoteType::from_u8(4), Some(NoteType::KaBig));
         assert_eq!(NoteType::from_u8(5), Some(NoteType::Roll));
         assert_eq!(NoteType::from_u8(6), Some(NoteType::RollBig));
-        assert_eq!(NoteType::from_u8(7), Some(NoteType::Balloon));
-        assert_eq!(NoteType::from_u8(8), Some(NoteType::End));
+        assert_eq!(NoteType::from_u8(7), Some(NoteType::End));
+        assert_eq!(NoteType::from_u8(8), Some(NoteType::Balloon));
         assert_eq!(NoteType::from_u8(0), None);
         assert_eq!(NoteType::from_u8(9), None);
     }
@@ -144,6 +158,8 @@ mod tests {
         let note = Note {
             note_type: NoteType::Don,
             time_ms: 0.0,
+            end_time_ms: None,
+            balloon_count: None,
             scroll_factor: 1.0,
         };
         assert_eq!(note.note_type, NoteType::Don);

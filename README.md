@@ -1,6 +1,4 @@
-# RustTJAPlayer
-Rust と egui (eframe) で実装する、軽量な TJA 譜面演奏プレイヤー。
-
+# TJAPlayer-S
 > [!NOTE]
 > **現在開発中です。**
-> 軽量で、クラッシュしないように目指しております。
+> 現在C#に移植しております。

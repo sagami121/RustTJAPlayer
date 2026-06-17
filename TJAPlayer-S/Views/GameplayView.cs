@@ -34,6 +34,23 @@ public class GameplayView : UserControl, IAppState
     private bool isAutoplayEnabled = Utils.ConfigManager.Autoplay;
     private bool configChanged = false;
 
+    // 入力エフェクト用フィールド
+    private bool isLeftDonPressed;
+    private bool isRightDonPressed;
+    private bool isLeftKaPressed;
+    private bool isRightKaPressed;
+    private System.Diagnostics.Stopwatch leftDonStopwatch = new();
+    private System.Diagnostics.Stopwatch rightDonStopwatch = new();
+    private System.Diagnostics.Stopwatch leftKaStopwatch = new();
+    private System.Diagnostics.Stopwatch rightKaStopwatch = new();
+
+    private bool autoplayIsRightHand = true;
+    private double lastAutoplayHitTimeMs = 0;
+
+    // コンボ演出用フィールド
+    private float comboScale = 1.0f;
+    private string cachedComboText = "";
+
     private double cachedCurrentTimeMs = 0;
     private double CurrentPlayTimeMs => cachedCurrentTimeMs;
 
@@ -95,8 +112,13 @@ public class GameplayView : UserControl, IAppState
             return;
         }
 
-        if (e.KeyCode == Keys.F || e.KeyCode == Keys.J) ProcessHit(true);
-        if (e.KeyCode == Keys.D || e.KeyCode == Keys.K) ProcessHit(false);
+        // 演奏操作はオートプレイ中は無効化
+        if (isAutoplayEnabled) return;
+
+        if (e.KeyCode == Keys.F) ProcessHit(true, true);
+        if (e.KeyCode == Keys.J) ProcessHit(true, false);
+        if (e.KeyCode == Keys.D) ProcessHit(false, true);
+        if (e.KeyCode == Keys.K) ProcessHit(false, false);
     }
 
     private void Exit()
@@ -109,8 +131,36 @@ public class GameplayView : UserControl, IAppState
         RequestedExit?.Invoke();
     }
 
-    private void ProcessHit(bool isDon)
+    private void ProcessHit(bool isDon, bool isLeft)
     {
+        // Trigger visual effect
+        if (isDon)
+        {
+            if (isLeft)
+            {
+                isLeftDonPressed = true;
+                leftDonStopwatch.Restart();
+            }
+            else
+            {
+                isRightDonPressed = true;
+                rightDonStopwatch.Restart();
+            }
+        }
+        else
+        {
+            if (isLeft)
+            {
+                isLeftKaPressed = true;
+                leftKaStopwatch.Restart();
+            }
+            else
+            {
+                isRightKaPressed = true;
+                rightKaStopwatch.Restart();
+            }
+        }
+
         string sePath = isDon ? @"Theme\default\sound\dong.wav" : @"Theme\default\sound\ka.wav";
         audioManager.PlaySoundEffect(sePath);
 
@@ -122,7 +172,7 @@ public class GameplayView : UserControl, IAppState
 
         if (activeRoll != null)
         {
-            scoringSystem.AddScore(Judgment.Perfect);
+            scoringSystem.AddScore(Judgment.Perfect, false);
             return;
         }
 
@@ -160,7 +210,15 @@ public class GameplayView : UserControl, IAppState
             closestNote.IsHit = true;
             if (judgment != Judgment.None)
             {
-                scoringSystem.AddScore(judgment);
+                bool isBigNote = (closestNote.Type == NoteType.BigDon || closestNote.Type == NoteType.BigKa);
+                scoringSystem.AddScore(judgment, isBigNote);
+
+                // コンボ加算アニメーション
+                if (judgment == Judgment.Perfect || judgment == Judgment.Good)
+                {
+                    comboScale = 1.3f;
+                    cachedComboText = scoringSystem.Combo.ToString();
+                }
             }
         }
     }
@@ -207,6 +265,9 @@ public class GameplayView : UserControl, IAppState
 
         cachedCurrentTimeMs = chartTime + Utils.ConfigManager.JudgeOffset;
 
+        // コンボアニメーション減衰
+        comboScale = comboScale + (1.0f - comboScale) * 0.1f;
+
         foreach (var note in chart.Notes)
         {
             if (note.IsHit) continue;
@@ -216,14 +277,40 @@ public class GameplayView : UserControl, IAppState
                 if (cachedCurrentTimeMs > note.TimeMs + JudgmentSystem.BadWindowMs)
                 {
                     note.IsHit = true;
-                    scoringSystem.AddScore(Judgment.Miss);
+                    scoringSystem.AddScore(Judgment.Miss, false);
+                    comboScale = 1.0f; // リセット時はアニメーション無効
                 }
                 else if (isAutoplayEnabled && cachedCurrentTimeMs >= note.TimeMs)
                 {
                     note.IsHit = true;
                     string sePath = (note.Type == NoteType.Don || note.Type == NoteType.BigDon) ? @"Theme\default\sound\dong.wav" : @"Theme\default\sound\ka.wav";
                     audioManager.PlaySoundEffect(sePath);
-                    scoringSystem.AddScore(Judgment.Perfect);
+                    bool isBigNote = (note.Type == NoteType.BigDon || note.Type == NoteType.BigKa);
+                    scoringSystem.AddScore(Judgment.Perfect, isBigNote);
+                    
+                    // Simulate input effect for Autoplay
+                    if (cachedCurrentTimeMs - lastAutoplayHitTimeMs > 1000)
+                    {
+                        autoplayIsRightHand = true;
+                    }
+                    lastAutoplayHitTimeMs = cachedCurrentTimeMs;
+
+                    if (note.Type == NoteType.Don) { 
+                        if (autoplayIsRightHand) { isRightDonPressed = true; rightDonStopwatch.Restart(); }
+                        else { isLeftDonPressed = true; leftDonStopwatch.Restart(); }
+                        autoplayIsRightHand = !autoplayIsRightHand;
+                    }
+                    else if (note.Type == NoteType.BigDon) { isLeftDonPressed = true; isRightDonPressed = true; leftDonStopwatch.Restart(); rightDonStopwatch.Restart(); }
+                    else if (note.Type == NoteType.Ka) { 
+                        if (autoplayIsRightHand) { isRightKaPressed = true; rightKaStopwatch.Restart(); }
+                        else { isLeftKaPressed = true; leftKaStopwatch.Restart(); }
+                        autoplayIsRightHand = !autoplayIsRightHand;
+                    }
+                    else if (note.Type == NoteType.BigKa) { isLeftKaPressed = true; isRightKaPressed = true; leftKaStopwatch.Restart(); rightKaStopwatch.Restart(); }
+
+                    // コンボ加算アニメーション
+                    comboScale = 1.3f;
+                    cachedComboText = scoringSystem.Combo.ToString();
                 }
             }
             else if (note.Type == NoteType.Roll || note.Type == NoteType.BigRoll || note.Type == NoteType.Balloon)
@@ -237,7 +324,20 @@ public class GameplayView : UserControl, IAppState
                         {
                             note.LastHitTimeMs = cachedCurrentTimeMs;
                             audioManager.PlaySoundEffect(@"Theme\default\sound\dong.wav");
-                            scoringSystem.AddScore(Judgment.Perfect);
+                            bool isBigNote = (note.Type == NoteType.BigRoll);
+                            scoringSystem.AddScore(Judgment.Perfect, isBigNote);
+                            
+                            // Simulate roll effect
+                            if (isRightDonPressed)
+                            {
+                                isLeftDonPressed = true; leftDonStopwatch.Restart();
+                                isRightDonPressed = false;
+                            }
+                            else
+                            {
+                                isRightDonPressed = true; rightDonStopwatch.Restart();
+                                isLeftDonPressed = false;
+                            }
                         }
                     }
                 }
@@ -281,12 +381,85 @@ public class GameplayView : UserControl, IAppState
         g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
 
         double currentPlayTimeMs = cachedCurrentTimeMs;
-        float targetLineX = 200f;
-        float targetLineY = 100f;
+        float targetLineX = 150f; // Left side
+        float targetLineY = this.ClientSize.Height / 2f;
         const float widthPerBeat = 150f;
 
-        g.DrawEllipse(Pens.White, targetLineX - 30, targetLineY - 30, 60, 60);
+        // 1. Input Effect Taiko Drum
+        if (leftDonStopwatch.ElapsedMilliseconds > 100) isLeftDonPressed = false;
+        if (rightDonStopwatch.ElapsedMilliseconds > 100) isRightDonPressed = false;
+        if (leftKaStopwatch.ElapsedMilliseconds > 100) isLeftKaPressed = false;
+        if (rightKaStopwatch.ElapsedMilliseconds > 100) isRightKaPressed = false;
 
+        float drumX = 65f;
+        float drumY = targetLineY;
+        float outerRadius = 55f;
+        float innerRadius = 40f;
+
+        // Draw outer rim (Ka)
+        using (SolidBrush leftKaBrush = new SolidBrush(isLeftKaPressed ? Color.DeepSkyBlue : Color.Gray))
+        {
+            g.FillPie(leftKaBrush, drumX - outerRadius, drumY - outerRadius, outerRadius * 2, outerRadius * 2, 90, 180);
+        }
+        using (SolidBrush rightKaBrush = new SolidBrush(isRightKaPressed ? Color.DeepSkyBlue : Color.Gray))
+        {
+            g.FillPie(rightKaBrush, drumX - outerRadius, drumY - outerRadius, outerRadius * 2, outerRadius * 2, -90, 180);
+        }
+        g.DrawEllipse(Pens.Black, drumX - outerRadius, drumY - outerRadius, outerRadius * 2, outerRadius * 2);
+
+        // Draw inner face (Don)
+        using (SolidBrush leftDonBrush = new SolidBrush(isLeftDonPressed ? Color.Red : Color.White))
+        {
+            g.FillPie(leftDonBrush, drumX - innerRadius, drumY - innerRadius, innerRadius * 2, innerRadius * 2, 90, 180);
+        }
+        using (SolidBrush rightDonBrush = new SolidBrush(isRightDonPressed ? Color.Red : Color.White))
+        {
+            g.FillPie(rightDonBrush, drumX - innerRadius, drumY - innerRadius, innerRadius * 2, innerRadius * 2, -90, 180);
+        }
+        g.DrawEllipse(Pens.Black, drumX - innerRadius, drumY - innerRadius, innerRadius * 2, innerRadius * 2);
+        
+        // Split line
+        g.DrawLine(Pens.Black, drumX, drumY - outerRadius, drumX, drumY + outerRadius);
+
+        // 2. Combo (Inside Drum)
+        if (scoringSystem.Combo >= 10)
+        {
+            string comboStr = scoringSystem.Combo.ToString();
+            float displaySize = 36; // Fixed size
+            using Font comboFontBig = new Font(this.Font.FontFamily, displaySize, FontStyle.Bold);
+            using Font comboFontSmall = new Font(this.Font.FontFamily, 12, FontStyle.Bold);
+            
+            // Custom string format for center alignment
+            using StringFormat sf = new StringFormat();
+            sf.Alignment = StringAlignment.Center;
+            sf.LineAlignment = StringAlignment.Center;
+
+            // Draw shadow/outline
+            Brush outlineBrush = Brushes.Black;
+            Brush fillBrush = Brushes.White;
+
+            float textYOffset = 18;
+
+            for (int dx = -2; dx <= 2; dx++)
+            {
+                for (int dy = -2; dy <= 2; dy++)
+                {
+                    if (dx != 0 || dy != 0)
+                    {
+                        g.DrawString(comboStr, comboFontBig, outlineBrush, drumX + dx, drumY - 10 + dy, sf);
+                        g.DrawString("コンボ", comboFontSmall, outlineBrush, drumX + dx, drumY + textYOffset + dy, sf);
+                    }
+                }
+            }
+            // Draw number fill
+            g.DrawString(comboStr, comboFontBig, fillBrush, drumX, drumY - 10, sf);
+            g.DrawString("コンボ", comboFontSmall, fillBrush, drumX, drumY + textYOffset, sf);
+        }
+
+        // 3. Draw Target
+        g.DrawEllipse(Pens.White, targetLineX - 40, targetLineY - 40, 80, 80);
+
+        // 4. Draw Barlines
         foreach (var bar in chart.Barlines)
         {
             if (!bar.IsVisible) continue;
@@ -299,6 +472,7 @@ public class GameplayView : UserControl, IAppState
             g.DrawLine(Pens.Gray, x, y - 50, x, y + 50);
         }
 
+        // 5. Draw Notes
         foreach (var note in chart.Notes)
         {
             if (note.IsHit) continue;
@@ -320,7 +494,6 @@ public class GameplayView : UserControl, IAppState
         }
 
         g.DrawString($"Score: {scoringSystem.Score}", this.Font, Brushes.White, 10, 10);
-        g.DrawString($"Combo: {scoringSystem.Combo}", this.Font, Brushes.White, 10, 30);
         if (isAutoplayEnabled) g.DrawString("Auto Play", this.Font, Brushes.Yellow, 10, 50);
     }
 }

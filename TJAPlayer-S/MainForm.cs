@@ -117,6 +117,7 @@ public partial class MainForm : Form
         Controls.Clear();
         var diffSelectView = new DifficultySelectView(score);
         diffSelectView.DifficultySelected += (chart) => SwitchToGameplay(chart);
+        diffSelectView.RequestedExit += () => ReturnToSongSelect();
         stateManager?.ChangeState(diffSelectView);
         Controls.Add(diffSelectView);
         diffSelectView.Focus();

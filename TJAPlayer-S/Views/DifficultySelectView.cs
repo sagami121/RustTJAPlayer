@@ -17,6 +17,7 @@ public class DifficultySelectView : UserControl, IAppState
     private float currentScrollIdx = 0f;
 
     public event Action<TjaChart>? DifficultySelected;
+    public event Action? RequestedExit; // 追加
 
     public DifficultySelectView(Score score)
     {
@@ -38,6 +39,15 @@ public class DifficultySelectView : UserControl, IAppState
 
     private void DifficultySelectView_KeyDown(object? sender, KeyEventArgs e)
     {
+        if (e.KeyCode == Keys.Escape)
+        {
+            RequestedExit?.Invoke();
+            e.Handled = true;
+            return;
+        }
+
+        if (difficulties.Count == 0) return;
+
         if (e.KeyCode == Keys.D && selectedIndex > 0)
         {
             selectedIndex--;
@@ -50,8 +60,11 @@ public class DifficultySelectView : UserControl, IAppState
         }
         else if (e.KeyCode == Keys.J || e.KeyCode == Keys.Enter)
         {
-            DifficultySelected?.Invoke(score.Charts[difficulties[selectedIndex]]);
-            e.Handled = true;
+            if (selectedIndex >= 0 && selectedIndex < difficulties.Count)
+            {
+                DifficultySelected?.Invoke(score.Charts[difficulties[selectedIndex]]);
+                e.Handled = true;
+            }
         }
     }
 

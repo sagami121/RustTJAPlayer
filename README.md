@@ -3,9 +3,10 @@
 太鼓さん次郎の.tjaファイルを演奏できるソフトです。
 
 ## 今後対応する予定の機能
-- 連打,風船
-- HBSCROLL
-- BMSCROLL
+- [] 連打,風船
+- [] HBSCROLL
+- [] BMSCROLL
+
 
 ## ビルド方法
 `dotnet build -c Release`

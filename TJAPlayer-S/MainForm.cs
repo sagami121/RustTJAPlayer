@@ -22,6 +22,7 @@ public partial class MainForm : Form
         Text = "TJAPlayer-S";
         Size = new System.Drawing.Size(800, 600);
         audioManager = new AudioManager();
+        Common.TJAPlayer_S.Audio = audioManager;
         
         Utils.ConfigManager.Load(); // 設定の読み込み
 
@@ -151,7 +152,10 @@ public partial class MainForm : Form
         songSelectView.SongSelected += (score) => SwitchToDifficultySelect(score);
         
         if (stateManager == null)
+        {
             stateManager = new StateManager(songSelectView);
+            Common.TJAPlayer_S.StateManager = stateManager;
+        }
         else
             stateManager.ChangeState(songSelectView);
 

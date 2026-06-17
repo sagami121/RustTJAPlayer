@@ -22,6 +22,8 @@ public partial class MainForm : Form
         Text = "TJAPlayer-S";
         Size = new System.Drawing.Size(800, 600);
         audioManager = new AudioManager();
+        
+        Utils.ConfigManager.Load(); // 設定の読み込み
 
         LoadSongs();
         
@@ -93,6 +95,51 @@ public partial class MainForm : Form
                         Console.WriteLine($"Failed to parse {file}: {ex.Message}");
                     }
                 }
+
+                var osuFiles = Directory.GetFiles(dir, "*.osu", SearchOption.TopDirectoryOnly);
+                foreach (var file in osuFiles)
+                {
+                    string tjaPath = Path.ChangeExtension(file, ".tja");
+                    if (!File.Exists(tjaPath))
+                    {
+                        try
+                        {
+                            var osuChart = Gameplay.OsuParser.Parse(file);
+                            var tjaContent = Gameplay.OsuToTjaConverter.ConvertToTja(osuChart);
+                            File.WriteAllText(tjaPath, tjaContent, System.Text.Encoding.GetEncoding(932));
+                            
+                            var score = TjaParser.Parse(tjaPath);
+                            if (!string.IsNullOrEmpty(genreName)) score.Genre = genreName;
+                            score.GenreColor = genreColor;
+                            score.FontColor = fontColor;
+                            initialSongs.Add(score);
+                        }
+                        catch (Exception ex)
+                        {
+                            Console.WriteLine($"Failed to convert/parse {file}: {ex.Message}");
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    protected override void OnKeyDown(KeyEventArgs e)
+    {
+        base.OnKeyDown(e);
+        if (e.KeyCode == Keys.F2)
+        {
+            if (stateManager?.CurrentState is CreationModeState)
+            {
+                ReturnToSongSelect();
+            }
+            else
+            {
+                Controls.Clear();
+                var creationMode = new CreationModeState();
+                stateManager?.ChangeState(creationMode);
+                Controls.Add((Control)creationMode); // IAppStateがControlを実装していると仮定
+                ((Control)creationMode).Focus();
             }
         }
     }
@@ -100,7 +147,7 @@ public partial class MainForm : Form
     public void ReturnToSongSelect()
     {
         Controls.Clear();
-        var songSelectView = new SongSelectView(initialSongs);
+        var songSelectView = new SongSelectView(initialSongs, audioManager);
         songSelectView.SongSelected += (score) => SwitchToDifficultySelect(score);
         
         if (stateManager == null)
@@ -115,7 +162,7 @@ public partial class MainForm : Form
     public void SwitchToDifficultySelect(Score score)
     {
         Controls.Clear();
-        var diffSelectView = new DifficultySelectView(score);
+        var diffSelectView = new DifficultySelectView(score, audioManager);
         diffSelectView.DifficultySelected += (chart) => SwitchToGameplay(chart);
         diffSelectView.RequestedExit += () => ReturnToSongSelect();
         stateManager?.ChangeState(diffSelectView);

@@ -1,16 +1,30 @@
+using SlimDX.Windows;
+using System.Windows.Forms;
+using System;
+
 namespace TjaPlayer;
 
 static class Program
 {
-    /// <summary>
-    ///  The main entry point for the application.
-    /// </summary>
     [STAThread]
     static void Main()
     {
-        // To customize application configuration such as set high DPI settings or default font,
-        // see https://aka.ms/applicationconfiguration.
-        ApplicationConfiguration.Initialize();
-        Application.Run(new MainForm());
+        try
+        {
+            using (var mainForm = new MainForm())
+            {
+                mainForm.Show();
+                MessagePump.Run(mainForm, () =>
+                {
+                    mainForm.UpdateLoop();
+                    mainForm.RenderLoop();
+                });
+            }
+        }
+        catch (Exception ex)
+        {
+            System.IO.File.WriteAllText("error.log", ex.ToString());
+            MessageBox.Show(ex.Message, "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
     }    
 }

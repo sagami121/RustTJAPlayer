@@ -29,6 +29,10 @@ public class ScoringSystem
 {
     public int Score { get; private set; }
     public int Combo { get; private set; }
+    public int MaxCombo { get; private set; }
+    public int PerfectCount { get; private set; }
+    public int GoodCount { get; private set; }
+    public int MissCount { get; private set; }
 
     public void AddScore(Judgment judgment)
     {
@@ -37,17 +41,20 @@ public class ScoringSystem
             case Judgment.Perfect:
                 Score += 1000;
                 Combo++;
+                PerfectCount++;
                 break;
             case Judgment.Good:
                 Score += 500;
                 Combo++;
+                GoodCount++;
                 break;
             case Judgment.Bad:
-                // Combo continues, score doesn't increase
                 break;
             case Judgment.Miss:
                 Combo = 0;
+                MissCount++;
                 break;
         }
+        if (Combo > MaxCombo) MaxCombo = Combo;
     }
 }

@@ -5,11 +5,12 @@ namespace TjaPlayer.Utils;
 
 public static class ConfigManager
 {
-    private static readonly string ConfigPath = "config.ini";
+    private static readonly string ConfigPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "config.ini");
 
     public static bool Autoplay { get; set; } = false;
     public static double JudgeOffset { get; set; } = 0.0; // ミリ秒単位でのタイミング微調整
     public static double PlaybackSpeed { get; set; } = 1.0; // 再生速度 (1.0 = 標準)
+    public static bool CreationMode_ShowMeasure { get; set; } = true; // 譜面制作モード設定
 
     public static void Load()
     {
@@ -27,6 +28,12 @@ public static class ConfigManager
             {
                 if (double.TryParse(line.Substring(14), out var ps)) PlaybackSpeed = ps;
             }
+            if (line.StartsWith("CreationMode_ShowMeasure="))
+            {
+                string val = line.Substring(25).Trim().ToLower();
+                if (val == "true" || val == "t") CreationMode_ShowMeasure = true;
+                else if (val == "false" || val == "f") CreationMode_ShowMeasure = false;
+            }
         }
     }
 
@@ -35,7 +42,8 @@ public static class ConfigManager
         File.WriteAllLines(ConfigPath, new[] { 
             $"Autoplay={Autoplay}",
             $"JudgeOffset={JudgeOffset}",
-            $"PlaybackSpeed={PlaybackSpeed}"
+            $"PlaybackSpeed={PlaybackSpeed}",
+            $"CreationMode_ShowMeasure={CreationMode_ShowMeasure}"
         });
     }
 }

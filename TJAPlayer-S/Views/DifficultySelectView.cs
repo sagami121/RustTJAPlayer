@@ -4,6 +4,7 @@ using System.Drawing;
 using System.Windows.Forms;
 using TjaPlayer.Gameplay;
 using TjaPlayer.Models;
+using TjaPlayer.Audio;
 
 namespace TjaPlayer.Views;
 
@@ -11,6 +12,7 @@ public class DifficultySelectView : UserControl, IAppState
 {
     public AppStateEnum State => AppStateEnum.SongSelect;
     
+    private AudioManager audioManager;
     private Score score;
     private List<string> difficulties;
     private int selectedIndex = 0;
@@ -19,9 +21,10 @@ public class DifficultySelectView : UserControl, IAppState
     public event Action<TjaChart>? DifficultySelected;
     public event Action? RequestedExit; // 追加
 
-    public DifficultySelectView(Score score)
+    public DifficultySelectView(Score score, AudioManager audioManager)
     {
         this.score = score;
+        this.audioManager = audioManager;
         this.difficulties = new List<string>(score.Charts.Keys);
         Dock = DockStyle.Fill;
         DoubleBuffered = true;
@@ -51,17 +54,20 @@ public class DifficultySelectView : UserControl, IAppState
         if (e.KeyCode == Keys.D && selectedIndex > 0)
         {
             selectedIndex--;
+            audioManager.PlaySoundEffect(System.IO.Path.Combine("Theme", "default", "sound", "ka.wav"));
             e.Handled = true;
         }
         else if (e.KeyCode == Keys.K && selectedIndex < difficulties.Count - 1)
         {
             selectedIndex++;
+            audioManager.PlaySoundEffect(System.IO.Path.Combine("Theme", "default", "sound", "ka.wav"));
             e.Handled = true;
         }
         else if (e.KeyCode == Keys.J || e.KeyCode == Keys.Enter)
         {
             if (selectedIndex >= 0 && selectedIndex < difficulties.Count)
             {
+                audioManager.PlaySoundEffect(System.IO.Path.Combine("Theme", "default", "sound", "dong.wav"));
                 DifficultySelected?.Invoke(score.Charts[difficulties[selectedIndex]]);
                 e.Handled = true;
             }

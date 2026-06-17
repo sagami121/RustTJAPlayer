@@ -6,7 +6,6 @@ namespace TjaPlayer.Gameplay;
 
 /// <summary>
 /// Represents song metadata and high-level information for song selection.
-/// Based on OpenTaiko's CScore.
 /// </summary>
 public class Score
 {

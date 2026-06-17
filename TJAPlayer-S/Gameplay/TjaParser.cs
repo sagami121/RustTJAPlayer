@@ -53,7 +53,6 @@ public class TjaParser
 
         score.Charts = ParseTjaFile(lines, score.DirectoryPath, globalBpm, globalWave, globalOffset);
         
-        // BaseBpmの決定 (最初のチャートのBPMを採用)
         if (score.Charts.Count > 0)
         {
             score.BaseBpm = globalBpm;
@@ -112,11 +111,10 @@ public class TjaParser
         foreach (var line in lines)
         {
             if (line.StartsWith("COURSE:", StringComparison.OrdinalIgnoreCase)) currentCourse = line.Substring(7).Trim();
-            else if (line.StartsWith("#START", StringComparison.OrdinalIgnoreCase)) { parsingChart = true; currentCourseLines.Clear(); currentCourseLines.Add(line); }
+            else if (line.StartsWith("#START", StringComparison.OrdinalIgnoreCase)) { parsingChart = true; currentCourseLines.Clear(); }
             else if (line.StartsWith("#END", StringComparison.OrdinalIgnoreCase))
             {
                 parsingChart = false;
-                currentCourseLines.Add(line);
                 charts[currentCourse] = ParseChart(currentCourseLines.ToArray(), directory, globalBpm, globalWave, globalOffset);
             }
             else if (parsingChart) currentCourseLines.Add(line);
@@ -152,46 +150,6 @@ public class TjaParser
         List<PendingNote> pendingNotes = new();
         Note? activeRollNote = null;
 
-        // --- マクロ展開処理 ---
-        var macros = new Dictionary<string, List<string>>();
-        var expandedLines = new List<string>();
-        string? currentMacroName = null;
-        List<string>? currentMacroLines = null;
-
-        foreach (var line in lines)
-        {
-            // 正規化: 全角スペースを半角に置換してから処理する
-            string normalizedLine = line.Replace('　', ' ');
-            
-            if (normalizedLine.StartsWith("#MACRO_START", StringComparison.OrdinalIgnoreCase))
-            {
-                currentMacroName = normalizedLine.Substring(12).Trim();
-                currentMacroLines = new List<string>();
-            }
-            else if (normalizedLine.StartsWith("#MACRO_END", StringComparison.OrdinalIgnoreCase))
-            {
-                if (currentMacroName != null && currentMacroLines != null)
-                    macros[currentMacroName] = currentMacroLines;
-                currentMacroName = null;
-                currentMacroLines = null;
-            }
-            else if (normalizedLine.StartsWith("#MACRO_CALL", StringComparison.OrdinalIgnoreCase))
-            {
-                string macroName = normalizedLine.Substring(11).Trim();
-                if (macros.TryGetValue(macroName, out var macroLines))
-                    expandedLines.AddRange(macroLines);
-            }
-            else if (currentMacroLines != null)
-            {
-                currentMacroLines.Add(line);
-            }
-            else
-            {
-                expandedLines.Add(line);
-            }
-        }
-        // ---------------------
-
         var handlers = new Dictionary<string, CommandHandler>(StringComparer.OrdinalIgnoreCase);
         handlers["#BPMCHANGE"] = (string arg, ParserState s, ref double t, TjaChart c, ref Note? r) => s.CurrentBpm = CTExpression.Evaluate(arg, 0);
         handlers["#SCROLL"] = (string arg, ParserState s, ref double t, TjaChart c, ref Note? r) => s.ScrollX = CTExpression.Evaluate(arg, 0);
@@ -207,7 +165,6 @@ public class TjaParser
         handlers["#GOGOEND"] = (string arg, ParserState s, ref double t, TjaChart c, ref Note? r) => s.IsGogo = false;
         handlers["#DELAY"] = (string arg, ParserState s, ref double t, TjaChart c, ref Note? r) => t += CTExpression.Evaluate(arg, 0) * 1000.0;
         
-        // --- 新機能: IF/ELSE/ENDIF ---
         handlers["#IF"] = (string arg, ParserState s, ref double t, TjaChart c, ref Note? r) => {
             bool parentIsSkipping = s.IsSkipping;
             bool condition = CTExpression.Evaluate(arg, 0) != 0;
@@ -220,7 +177,7 @@ public class TjaParser
         };
         handlers["#ENDIF"] = (string arg, ParserState s, ref double t, TjaChart c, ref Note? r) => s.SkipStack.Pop();
 
-        foreach (var line in expandedLines)
+        foreach (var line in lines)
         {
             string cleanedLine = line;
             int commentIndex = line.IndexOf("//");
@@ -300,9 +257,9 @@ public class TjaParser
                 { 
                     Type = (NoteType)(pNote.NoteChar - '0'), 
                     TimeMs = noteTime, 
-                    ScrollFactorX = pNote.Scroll, // pNoteの値を使用
+                    ScrollFactorX = pNote.Scroll,
                     ScrollFactorY = state.ScrollY,
-                    Bpm = pNote.Bpm, // pNoteの値を使用
+                    Bpm = pNote.Bpm,
                     IsGogo = state.IsGogo
                 };
                 chart.Notes.Add(activeRollNote);
@@ -318,9 +275,9 @@ public class TjaParser
                 { 
                     Type = (NoteType)(pNote.NoteChar - '0'), 
                     TimeMs = noteTime, 
-                    ScrollFactorX = pNote.Scroll, // pNoteの値を使用
+                    ScrollFactorX = pNote.Scroll,
                     ScrollFactorY = state.ScrollY,
-                    Bpm = pNote.Bpm, // pNoteの値を使用
+                    Bpm = pNote.Bpm,
                     IsGogo = state.IsGogo
                 });
             }

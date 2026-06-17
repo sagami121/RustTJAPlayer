@@ -12,14 +12,30 @@ public class DifficultySelectView : UserControl, IAppState
 {
     public AppStateEnum State => AppStateEnum.SongSelect;
     
-    private AudioManager audioManager;
-    private Score score;
-    private List<string> difficulties;
+    private readonly AudioManager audioManager;
+    private readonly Score score;
+    private readonly List<string> difficulties;
     private int selectedIndex = 0;
     private float currentScrollIdx = 0f;
 
     public event Action<TjaChart>? DifficultySelected;
-    public event Action? RequestedExit; // 追加
+    public event Action? RequestedExit;
+
+    private bool showOptions = false;
+    private int selectedOptionIndex = 0;
+    private readonly string[] optionLabels = { "Mod", "ドロン", "スピード" };
+    private readonly string[] modNames = { "なし", "あべこべ", "きまぐれ", "でたらめ" };
+
+    private string GetOptionValueString(int index)
+    {
+        switch (index)
+        {
+            case 0: return modNames[(int)Utils.ConfigManager.CurrentNoteMod];
+            case 1: return Utils.ConfigManager.IsDoron ? "オン" : "オフ";
+            case 2: return Utils.ConfigManager.ScrollSpeed + "倍";
+            default: return "";
+        }
+    }
 
     public DifficultySelectView(Score score, AudioManager audioManager)
     {
@@ -42,9 +58,59 @@ public class DifficultySelectView : UserControl, IAppState
 
     private void DifficultySelectView_KeyDown(object? sender, KeyEventArgs e)
     {
+        if (showOptions)
+        {
+            if (e.KeyCode == Keys.Escape || e.KeyCode == Keys.E)
+            {
+                showOptions = false;
+                audioManager.PlaySoundEffect(System.IO.Path.Combine("Theme", "default", "sound", "ka.wav"));
+                e.Handled = true;
+            }
+            else if (e.KeyCode == Keys.K && selectedOptionIndex < optionLabels.Length - 1)
+            {
+                selectedOptionIndex++;
+                audioManager.PlaySoundEffect(System.IO.Path.Combine("Theme", "default", "sound", "ka.wav"));
+                e.Handled = true;
+            }
+            else if (e.KeyCode == Keys.D && selectedOptionIndex > 0)
+            {
+                selectedOptionIndex--;
+                audioManager.PlaySoundEffect(System.IO.Path.Combine("Theme", "default", "sound", "ka.wav"));
+                e.Handled = true;
+            }
+            else if (e.KeyCode == Keys.J || e.KeyCode == Keys.Enter)
+            {
+                switch (selectedOptionIndex)
+                {
+                    case 0:
+                        Utils.ConfigManager.CurrentNoteMod = (Utils.ConfigManager.NoteMod)(((int)Utils.ConfigManager.CurrentNoteMod + 1) % 4);
+                        break;
+                    case 1:
+                        Utils.ConfigManager.IsDoron = !Utils.ConfigManager.IsDoron;
+                        break;
+                    case 2:
+                        Utils.ConfigManager.ScrollSpeed = (Utils.ConfigManager.ScrollSpeed % 4) + 1;
+                        break;
+                }
+                Utils.ConfigManager.Save();
+                audioManager.PlaySoundEffect(System.IO.Path.Combine("Theme", "default", "sound", "dong.wav"));
+                e.Handled = true;
+            }
+            return;
+        }
+
         if (e.KeyCode == Keys.Escape)
         {
             RequestedExit?.Invoke();
+            audioManager.PlaySoundEffect(System.IO.Path.Combine("Theme", "default", "sound", "ka.wav"));
+            e.Handled = true;
+            return;
+        }
+
+        if (e.KeyCode == Keys.E)
+        {
+            showOptions = true;
+            audioManager.PlaySoundEffect(System.IO.Path.Combine("Theme", "default", "sound", "dong.wav"));
             e.Handled = true;
             return;
         }
@@ -74,14 +140,17 @@ public class DifficultySelectView : UserControl, IAppState
         }
     }
 
+    public void Render()
+    {
+        Invalidate();
+    }
+
     public new void Update()
     {
         float lerpSpeed = 10f;
         float deltaTime = 0.016f;
         currentScrollIdx = currentScrollIdx + (selectedIndex - currentScrollIdx) * (deltaTime * lerpSpeed);
     }
-
-    public void Render() { Invalidate(); }
 
     protected override void OnPaint(PaintEventArgs e)
     {
@@ -105,6 +174,18 @@ public class DifficultySelectView : UserControl, IAppState
 
             DrawDiffBar(g, targetX, y, scale, alpha, difficulties[i], isSelected);
         }
+
+        // オプション画面の描画
+        if (showOptions)
+        {
+            g.FillRectangle(new SolidBrush(Color.FromArgb(200, Color.Black)), 0, 0, Width, Height);
+            g.DrawString("演奏オプション", new Font(Utils.FontManager.KantiryuFontFamily ?? FontFamily.GenericSansSerif, 30, FontStyle.Bold), Brushes.White, 300, 30);
+            for (int i = 0; i < optionLabels.Length; i++)
+            {
+                string text = $"{optionLabels[i]}: {GetOptionValueString(i)}";
+                g.DrawString(text, new Font(Utils.FontManager.KantiryuFontFamily ?? FontFamily.GenericSansSerif, 24), i == selectedOptionIndex ? Brushes.Yellow : Brushes.White, 300, 100 + i * 60);
+            }
+        }
     }
 
     private void DrawDiffBar(Graphics g, float x, float y, float scale, float alpha, string difficulty, bool isSelected)
@@ -120,7 +201,7 @@ public class DifficultySelectView : UserControl, IAppState
 
         using (Brush textBrush = new SolidBrush(Color.FromArgb((int)(alpha * 255), Color.White)))
         {
-            Font font = new Font("Arial", isSelected ? 20 * scale : 16 * scale, FontStyle.Bold);
+            Font font = new Font(Utils.FontManager.KantiryuFontFamily ?? FontFamily.GenericSansSerif, isSelected ? 20 * scale : 16 * scale, FontStyle.Bold);
             g.DrawString(difficulty, font, textBrush, x + 10, y - barHeight / 2f + 5);
         }
     }

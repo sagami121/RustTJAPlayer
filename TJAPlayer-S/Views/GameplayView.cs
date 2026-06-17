@@ -21,10 +21,13 @@ public class GameplayView : UserControl, IAppState
     private readonly int audioStream;
     private readonly TjaChart chart;
     
+    // 演奏オプション
+    private Utils.ConfigManager.NoteMod noteMod = Utils.ConfigManager.CurrentNoteMod;
+    private bool isDoron = Utils.ConfigManager.IsDoron;
+    private int scrollSpeed = Utils.ConfigManager.ScrollSpeed;
+    
     // 高精度タイマー
     private System.Diagnostics.Stopwatch playStopwatch = new();
-    private double lastAudioPosMs = 0;
-    private double lastSystemTimeMs = 0;
 
     // ディレイ用フィールド
     private bool isStartingDelay = true;
@@ -64,7 +67,12 @@ public class GameplayView : UserControl, IAppState
         this.judgmentSystem = new JudgmentSystem();
         
         Utils.ConfigManager.Load();
+        Utils.KeyConfigManager.Load(); // キー設定を読み込み
         isAutoplayEnabled = Utils.ConfigManager.Autoplay;
+        // オプション再取得
+        this.noteMod = Utils.ConfigManager.CurrentNoteMod;
+        this.isDoron = Utils.ConfigManager.IsDoron;
+        this.scrollSpeed = Utils.ConfigManager.ScrollSpeed;
         
         string fullAudioPath = System.IO.Path.Combine(chart.DirectoryPath, chart.AudioFileName);
         this.audioStream = audioManager.LoadTrack(fullAudioPath);
@@ -84,6 +92,21 @@ public class GameplayView : UserControl, IAppState
         {
             note.IsHit = false;
             note.LastHitTimeMs = 0;
+            
+            // オプション適用
+            if (noteMod == Utils.ConfigManager.NoteMod.Abekobe)
+            {
+                if (note.Type == NoteType.Don) note.Type = NoteType.Ka;
+                else if (note.Type == NoteType.Ka) note.Type = NoteType.Don;
+                else if (note.Type == NoteType.BigDon) note.Type = NoteType.BigKa;
+                else if (note.Type == NoteType.BigKa) note.Type = NoteType.BigDon;
+            }
+            // きまぐれ/でたらめ (簡易)
+            Random rng = new Random();
+            if (noteMod == Utils.ConfigManager.NoteMod.Kimagure && rng.NextDouble() < 0.2)
+                note.Type = (note.Type == NoteType.Don || note.Type == NoteType.BigDon) ? NoteType.Ka : NoteType.Don;
+            if (noteMod == Utils.ConfigManager.NoteMod.Detarame && rng.NextDouble() < 0.5)
+                note.Type = (note.Type == NoteType.Don || note.Type == NoteType.BigDon) ? NoteType.Ka : NoteType.Don;
         }
 
         isStartingDelay = true;
@@ -115,10 +138,10 @@ public class GameplayView : UserControl, IAppState
         // 演奏操作はオートプレイ中は無効化
         if (isAutoplayEnabled) return;
 
-        if (e.KeyCode == Keys.F) ProcessHit(true, true);
-        if (e.KeyCode == Keys.J) ProcessHit(true, false);
-        if (e.KeyCode == Keys.D) ProcessHit(false, true);
-        if (e.KeyCode == Keys.K) ProcessHit(false, false);
+        if (e.KeyCode == Utils.KeyConfigManager.DonLeft) ProcessHit(true, true);
+        else if (e.KeyCode == Utils.KeyConfigManager.DonRight) ProcessHit(true, false);
+        else if (e.KeyCode == Utils.KeyConfigManager.KaLeft) ProcessHit(false, true);
+        else if (e.KeyCode == Utils.KeyConfigManager.KaRight) ProcessHit(false, false);
     }
 
     private void Exit()
@@ -425,9 +448,9 @@ public class GameplayView : UserControl, IAppState
         if (scoringSystem.Combo >= 10)
         {
             string comboStr = scoringSystem.Combo.ToString();
-            float displaySize = 36; // Fixed size
-            using Font comboFontBig = new Font(this.Font.FontFamily, displaySize, FontStyle.Bold);
-            using Font comboFontSmall = new Font(this.Font.FontFamily, 12, FontStyle.Bold);
+            float displaySize = 24; // 30 -> 24 に微調整
+            using Font comboFontBig = new Font(Utils.FontManager.KantiryuFontFamily, displaySize, FontStyle.Bold);
+            using Font comboFontSmall = new Font(Utils.FontManager.KantiryuFontFamily, 16, FontStyle.Bold);
             
             // Custom string format for center alignment
             using StringFormat sf = new StringFormat();
@@ -466,7 +489,7 @@ public class GameplayView : UserControl, IAppState
             double diff = bar.TimeMs - currentPlayTimeMs;
             if (diff < -1000 || diff > 4000) continue;
             
-            float pixelsPerMs = (float)(bar.Bpm / 60000.0) * widthPerBeat;
+            float pixelsPerMs = (float)(bar.Bpm / 60000.0) * widthPerBeat * scrollSpeed;
             float x = targetLineX + (float)(diff * pixelsPerMs * bar.ScrollFactorX);
             float y = targetLineY + (float)(diff * pixelsPerMs * bar.ScrollFactorY);
             g.DrawLine(Pens.Gray, x, y - 50, x, y + 50);
@@ -476,17 +499,25 @@ public class GameplayView : UserControl, IAppState
         foreach (var note in chart.Notes)
         {
             if (note.IsHit) continue;
-            // 演奏開始前の譜面表示を防ぐ
-            if (currentPlayTimeMs < 0) continue; 
-            if (!note.IsVisible) continue;
-
             double diff = note.TimeMs - currentPlayTimeMs;
-            // 画面外（演奏済み または 遠すぎる）をスキップ
-            if (diff < -500 || diff > 4000) continue;
+            // 判定を大幅に緩和
+            if (diff > 20000) continue;
             
-            float pixelsPerMs = (float)(note.Bpm / 60000.0) * widthPerBeat;
+            if (!note.IsVisible) continue;
+            
+            // ドロン対応
+            if (isDoron) continue;
+
+            // 画面外（演奏済み）をスキップ
+            if (diff < -1000) continue;
+            
+            // 倍速対応 (スクロール速度反映)
+            float pixelsPerMs = (float)(note.Bpm / 60000.0) * widthPerBeat * scrollSpeed;
             float x = targetLineX + (float)(diff * pixelsPerMs * note.ScrollFactorX);
             float y = targetLineY + (float)(diff * pixelsPerMs * note.ScrollFactorY);
+            
+            // 描画範囲を緩和：画面外でも描画をスキップせず計算する
+            if (x < -1000 || x > Width + 1000) continue;
             
             Brush brush = (note.Type == NoteType.Ka || note.Type == NoteType.BigKa) ? Brushes.DeepSkyBlue : Brushes.Red;
             float size = (note.Type == NoteType.BigDon || note.Type == NoteType.BigKa) ? 70 : 50;
@@ -496,7 +527,7 @@ public class GameplayView : UserControl, IAppState
             g.DrawEllipse(Pens.Black, x - size / 2, y - size / 2, size, size);
         }
 
-        g.DrawString($"Score: {scoringSystem.Score}", this.Font, Brushes.White, 10, 10);
-        if (isAutoplayEnabled) g.DrawString("Auto Play", this.Font, Brushes.Yellow, 10, 50);
+        g.DrawString($"Score: {scoringSystem.Score}", new Font(Utils.FontManager.KantiryuFontFamily, 12), Brushes.White, 10, 10);
+        if (isAutoplayEnabled) g.DrawString("Auto Play", new Font(Utils.FontManager.KantiryuFontFamily, 12), Brushes.Yellow, 10, 50);
     }
 }

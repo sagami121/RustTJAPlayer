@@ -107,7 +107,7 @@ public class SongSelectView : UserControl, IAppState
         }
 
         using (Brush textBrush = new SolidBrush(Color.FromArgb((int)(alpha * 255), isSelected ? Color.White : song.FontColor)))
-        using (Font font = new Font("Arial", isSelected ? 20 * scale : 16 * scale, FontStyle.Bold))
+        using (Font font = new Font(Utils.FontManager.KantiryuFontFamily, isSelected ? 20 * scale : 16 * scale, FontStyle.Bold))
         {
             g.DrawString(song.Title, font, textBrush, x + 10, y - barHeight / 2f + 5);
         }

@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Drawing;
 using System.Windows.Forms;
 using TjaPlayer.Gameplay;
+using TjaPlayer.Audio;
 
 namespace TjaPlayer.Views;
 
@@ -10,15 +11,17 @@ public class SongSelectView : UserControl, IAppState
 {
     public AppStateEnum State => AppStateEnum.SongSelect;
     
+    private AudioManager audioManager;
     private List<Score> songs;
     private int selectedIndex = 0;
     private float currentScrollIdx = 0f;
 
     public event Action<Score>? SongSelected;
 
-    public SongSelectView(List<Score> songs)
+    public SongSelectView(List<Score> songs, AudioManager audioManager)
     {
         this.songs = songs;
+        this.audioManager = audioManager;
         Dock = DockStyle.Fill;
         DoubleBuffered = true;
         BackColor = Color.Black;
@@ -39,15 +42,18 @@ public class SongSelectView : UserControl, IAppState
         if (e.KeyCode == Keys.D && selectedIndex > 0)
         {
             selectedIndex--;
+            audioManager.PlaySoundEffect(System.IO.Path.Combine("Theme", "default", "sound", "ka.wav"));
             e.Handled = true;
         }
         else if (e.KeyCode == Keys.K && selectedIndex < songs.Count - 1)
         {
             selectedIndex++;
+            audioManager.PlaySoundEffect(System.IO.Path.Combine("Theme", "default", "sound", "ka.wav"));
             e.Handled = true;
         }
         else if (e.KeyCode == Keys.J || e.KeyCode == Keys.Enter)
         {
+            audioManager.PlaySoundEffect(System.IO.Path.Combine("Theme", "default", "sound", "dong.wav"));
             SongSelected?.Invoke(songs[selectedIndex]);
             e.Handled = true;
         }

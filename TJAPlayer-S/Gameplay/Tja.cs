@@ -6,7 +6,6 @@ namespace TjaPlayer.Gameplay;
 
 /// <summary>
 /// Represents the detailed content of a TJA chart.
-/// Based on OpenTaiko's CTja.
 /// </summary>
 public class Tja
 {

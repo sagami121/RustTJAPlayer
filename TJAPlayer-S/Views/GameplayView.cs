@@ -476,9 +476,12 @@ public class GameplayView : UserControl, IAppState
         foreach (var note in chart.Notes)
         {
             if (note.IsHit) continue;
+            // 演奏開始前の譜面表示を防ぐ
+            if (currentPlayTimeMs < 0) continue; 
             if (!note.IsVisible) continue;
 
             double diff = note.TimeMs - currentPlayTimeMs;
+            // 画面外（演奏済み または 遠すぎる）をスキップ
             if (diff < -500 || diff > 4000) continue;
             
             float pixelsPerMs = (float)(note.Bpm / 60000.0) * widthPerBeat;

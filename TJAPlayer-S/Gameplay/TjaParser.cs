@@ -22,7 +22,7 @@ public class TjaParser
         score.DirectoryPath = Path.GetDirectoryName(filePath) ?? "";
 
         System.Text.Encoding.RegisterProvider(System.Text.CodePagesEncodingProvider.Instance);
-        var lines = File.ReadAllLines(filePath, System.Text.Encoding.GetEncoding("shift-jis"));
+        var lines = ExpandMacros(File.ReadAllLines(filePath, System.Text.Encoding.GetEncoding(932)));
 
         double globalBpm = 130.0;
         string globalWave = "";
@@ -62,6 +62,46 @@ public class TjaParser
         return score;
     }
 
+    private static string[] ExpandMacros(string[] lines)
+    {
+        var macros = new Dictionary<string, List<string>>();
+        var expandedLines = new List<string>();
+        string? currentMacroName = null;
+        List<string>? currentMacroLines = null;
+
+        foreach (var line in lines)
+        {
+            string normalizedLine = line.Replace('　', ' ');
+            if (normalizedLine.StartsWith("#MACRO_START", StringComparison.OrdinalIgnoreCase))
+            {
+                currentMacroName = normalizedLine.Substring(12).Trim();
+                currentMacroLines = new List<string>();
+            }
+            else if (normalizedLine.StartsWith("#MACRO_END", StringComparison.OrdinalIgnoreCase))
+            {
+                if (currentMacroName != null && currentMacroLines != null)
+                    macros[currentMacroName] = currentMacroLines;
+                currentMacroName = null;
+                currentMacroLines = null;
+            }
+            else if (normalizedLine.StartsWith("#MACRO_CALL", StringComparison.OrdinalIgnoreCase))
+            {
+                string macroName = normalizedLine.Substring(11).Trim();
+                if (macros.TryGetValue(macroName, out var macroLines))
+                    expandedLines.AddRange(macroLines);
+            }
+            else if (currentMacroLines != null)
+            {
+                currentMacroLines.Add(line);
+            }
+            else
+            {
+                expandedLines.Add(line);
+            }
+        }
+        return expandedLines.ToArray();
+    }
+
     private static Dictionary<string, TjaChart> ParseTjaFile(string[] lines, string directory, double globalBpm, string globalWave, double globalOffset)
     {
         var charts = new Dictionary<string, TjaChart>();
@@ -93,7 +133,11 @@ public class TjaParser
         public double MeasureDen = 4.0;
         public bool IsGogo = false;
         public bool BarlineVisible = true;
+        public Stack<bool> SkipStack = new Stack<bool>();
+        public bool IsSkipping => SkipStack.Count > 0 && SkipStack.Peek();
     }
+
+    private delegate void CommandHandler(string argument, ParserState state, ref double currentAbsTimeMs, TjaChart chart, ref Note? activeRollNote);
 
     public static TjaChart ParseChart(string[] lines, string directory, double globalBpm, string globalWave, double globalOffset)
     {
@@ -108,45 +152,103 @@ public class TjaParser
         List<PendingNote> pendingNotes = new();
         Note? activeRollNote = null;
 
+        // --- マクロ展開処理 ---
+        var macros = new Dictionary<string, List<string>>();
+        var expandedLines = new List<string>();
+        string? currentMacroName = null;
+        List<string>? currentMacroLines = null;
+
         foreach (var line in lines)
         {
-            // コメント除去 (TJAPlayer3 準拠)
+            // 正規化: 全角スペースを半角に置換してから処理する
+            string normalizedLine = line.Replace('　', ' ');
+            
+            if (normalizedLine.StartsWith("#MACRO_START", StringComparison.OrdinalIgnoreCase))
+            {
+                currentMacroName = normalizedLine.Substring(12).Trim();
+                currentMacroLines = new List<string>();
+            }
+            else if (normalizedLine.StartsWith("#MACRO_END", StringComparison.OrdinalIgnoreCase))
+            {
+                if (currentMacroName != null && currentMacroLines != null)
+                    macros[currentMacroName] = currentMacroLines;
+                currentMacroName = null;
+                currentMacroLines = null;
+            }
+            else if (normalizedLine.StartsWith("#MACRO_CALL", StringComparison.OrdinalIgnoreCase))
+            {
+                string macroName = normalizedLine.Substring(11).Trim();
+                if (macros.TryGetValue(macroName, out var macroLines))
+                    expandedLines.AddRange(macroLines);
+            }
+            else if (currentMacroLines != null)
+            {
+                currentMacroLines.Add(line);
+            }
+            else
+            {
+                expandedLines.Add(line);
+            }
+        }
+        // ---------------------
+
+        var handlers = new Dictionary<string, CommandHandler>(StringComparer.OrdinalIgnoreCase);
+        handlers["#BPMCHANGE"] = (string arg, ParserState s, ref double t, TjaChart c, ref Note? r) => s.CurrentBpm = CTExpression.Evaluate(arg, 0);
+        handlers["#SCROLL"] = (string arg, ParserState s, ref double t, TjaChart c, ref Note? r) => s.ScrollX = CTExpression.Evaluate(arg, 0);
+        handlers["#SCROLL_EXPR"] = (string arg, ParserState s, ref double t, TjaChart c, ref Note? r) => s.ScrollX = CTExpression.Evaluate(arg, 0);
+        handlers["#BARLINEON"] = (string arg, ParserState s, ref double t, TjaChart c, ref Note? r) => s.BarlineVisible = true;
+        handlers["#BARLINEOFF"] = (string arg, ParserState s, ref double t, TjaChart c, ref Note? r) => s.BarlineVisible = false;
+        handlers["#MEASURE"] = (string arg, ParserState s, ref double t, TjaChart c, ref Note? r) => {
+            var parts = arg.Split('/');
+            s.MeasureNum = CTExpression.Evaluate(parts[0], 0);
+            s.MeasureDen = CTExpression.Evaluate(parts[1], 0);
+        };
+        handlers["#GOGOSTART"] = (string arg, ParserState s, ref double t, TjaChart c, ref Note? r) => s.IsGogo = true;
+        handlers["#GOGOEND"] = (string arg, ParserState s, ref double t, TjaChart c, ref Note? r) => s.IsGogo = false;
+        handlers["#DELAY"] = (string arg, ParserState s, ref double t, TjaChart c, ref Note? r) => t += CTExpression.Evaluate(arg, 0) * 1000.0;
+        
+        // --- 新機能: IF/ELSE/ENDIF ---
+        handlers["#IF"] = (string arg, ParserState s, ref double t, TjaChart c, ref Note? r) => {
+            bool parentIsSkipping = s.IsSkipping;
+            bool condition = CTExpression.Evaluate(arg, 0) != 0;
+            s.SkipStack.Push(parentIsSkipping || !condition);
+        };
+        handlers["#ELSE"] = (string arg, ParserState s, ref double t, TjaChart c, ref Note? r) => {
+            bool last = s.SkipStack.Pop();
+            bool parentIsSkipping = s.IsSkipping;
+            s.SkipStack.Push(parentIsSkipping || last);
+        };
+        handlers["#ENDIF"] = (string arg, ParserState s, ref double t, TjaChart c, ref Note? r) => s.SkipStack.Pop();
+
+        foreach (var line in expandedLines)
+        {
             string cleanedLine = line;
             int commentIndex = line.IndexOf("//");
-            if (commentIndex >= 0)
-            {
-                cleanedLine = line.Substring(0, commentIndex);
-            }
+            if (commentIndex >= 0) cleanedLine = line.Substring(0, commentIndex);
 
             string trimmed = cleanedLine.Trim();
             if (string.IsNullOrEmpty(trimmed)) continue;
 
             if (trimmed.StartsWith("#"))
             {
-                if (trimmed.StartsWith("#BPMCHANGE", StringComparison.OrdinalIgnoreCase))
+                var spaceIndex = trimmed.IndexOf(' ');
+                string command = spaceIndex >= 0 ? trimmed.Substring(0, spaceIndex) : trimmed;
+                string argument = spaceIndex >= 0 ? trimmed.Substring(spaceIndex + 1).Trim() : "";
+
+                bool isStructural = command.Equals("#IF", StringComparison.OrdinalIgnoreCase) || 
+                                    command.Equals("#ELSE", StringComparison.OrdinalIgnoreCase) || 
+                                    command.Equals("#ENDIF", StringComparison.OrdinalIgnoreCase);
+
+                if (state.IsSkipping && !isStructural) continue;
+
+                if (handlers.TryGetValue(command, out var handler))
                 {
-                    state.CurrentBpm = double.Parse(trimmed.Substring(10).Trim());
-                }
-                else if (trimmed.StartsWith("#SCROLL", StringComparison.OrdinalIgnoreCase))
-                {
-                    var val = trimmed.Substring(7).Trim();
-                    state.ScrollX = double.Parse(val);
-                }
-                else if (trimmed.StartsWith("#MEASURE", StringComparison.OrdinalIgnoreCase))
-                {
-                    var parts = trimmed.Substring(8).Trim().Split('/');
-                    state.MeasureNum = double.Parse(parts[0]);
-                    state.MeasureDen = double.Parse(parts[1]);
-                }
-                else if (trimmed.StartsWith("#GOGOSTART", StringComparison.OrdinalIgnoreCase)) state.IsGogo = true;
-                else if (trimmed.StartsWith("#GOGOEND", StringComparison.OrdinalIgnoreCase)) state.IsGogo = false;
-                else if (trimmed.StartsWith("#DELAY", StringComparison.OrdinalIgnoreCase))
-                {
-                    double delay = double.Parse(trimmed.Substring(6).Trim());
-                    currentAbsTimeMs += delay * 1000.0;
+                    handler(argument, state, ref currentAbsTimeMs, chart, ref activeRollNote);
                 }
                 continue;
             }
+
+            if (state.IsSkipping) continue;
 
             foreach (char c in trimmed)
             {

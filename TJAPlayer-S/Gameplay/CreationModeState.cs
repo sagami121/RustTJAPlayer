@@ -21,7 +21,7 @@ public class CreationModeState : UserControl, IAppState
         this.BackColor = Color.FromArgb(128, 0, 0, 0); // 半透明の黒背景
     }
 
-    public void Update()
+    public new void Update()
     {
         // 簡易的な入力処理
         _currentMeasure = Easing.Lerp(_currentMeasure, _targetMeasure, 0.1);

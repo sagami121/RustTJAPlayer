@@ -156,6 +156,7 @@ public class DifficultySelectView : UserControl, IAppState
     {
         base.OnPaint(e);
         Graphics g = e.Graphics;
+        Utils.SkinManager.RenderBackground(g, Width, Height);
         g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
 
         float centerY = Height / 2f;

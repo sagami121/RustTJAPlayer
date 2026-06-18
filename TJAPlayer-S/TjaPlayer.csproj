@@ -8,6 +8,8 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <AssemblyName>TJAPlayer-S</AssemblyName>
     <PlatformTarget>x86</PlatformTarget>
+    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+    <NoWarn>$(NoWarn);CA1416;NU1701</NoWarn>
   </PropertyGroup>
 
   <ItemGroup>

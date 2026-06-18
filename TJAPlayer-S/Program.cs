@@ -12,6 +12,7 @@ static class Program
         try
         {
             Utils.FontManager.Load(); // フォント読み込み
+            Utils.SkinManager.Load(); // スキン読み込み
             using (var mainForm = new MainForm())
             {
                 mainForm.Show();

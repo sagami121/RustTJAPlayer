@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using TjaPlayer.Models;
+using TjaPlayer.Utils;
 
 namespace TjaPlayer.Gameplay;
 
@@ -49,6 +50,11 @@ public class TjaParser
                 }
             }
             else if (line.StartsWith("#START", StringComparison.OrdinalIgnoreCase)) break;
+        }
+
+        if (!string.IsNullOrEmpty(globalWave))
+        {
+            globalWave = CompanionFileFinder.FindFileName(score.DirectoryPath, Path.GetFileName(filePath), globalWave);
         }
 
         score.Charts = ParseTjaFile(lines, score.DirectoryPath, globalBpm, globalWave, globalOffset);

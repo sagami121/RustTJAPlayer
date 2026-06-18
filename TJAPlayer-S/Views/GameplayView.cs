@@ -51,8 +51,12 @@ public class GameplayView : UserControl, IAppState
     private double lastAutoplayHitTimeMs = 0;
 
     // コンボ演出用フィールド
-    private float comboScale = 1.0f;
     private string cachedComboText = "";
+    private Animations.ComboAnimation comboAnimation = new Animations.ComboAnimation();
+    private float combobounces = 0;
+    private int lastComboValue = 0;
+    private Font comboFontBig;
+    private Font comboFontSmall;
 
     private double cachedCurrentTimeMs = 0;
     private double CurrentPlayTimeMs => cachedCurrentTimeMs;
@@ -66,8 +70,12 @@ public class GameplayView : UserControl, IAppState
         this.scoringSystem = new ScoringSystem();
         this.judgmentSystem = new JudgmentSystem();
         
+        comboFontBig = new Font(Utils.FontManager.KantiryuFontFamily, 24, FontStyle.Bold);
+        comboFontSmall = new Font(Utils.FontManager.KantiryuFontFamily, 16, FontStyle.Bold);
+
         Utils.ConfigManager.Load();
         Utils.KeyConfigManager.Load(); // キー設定を読み込み
+
         isAutoplayEnabled = Utils.ConfigManager.Autoplay;
         // オプション再取得
         this.noteMod = Utils.ConfigManager.CurrentNoteMod;
@@ -236,12 +244,11 @@ public class GameplayView : UserControl, IAppState
                 bool isBigNote = (closestNote.Type == NoteType.BigDon || closestNote.Type == NoteType.BigKa);
                 scoringSystem.AddScore(judgment, isBigNote);
 
-                // コンボ加算アニメーション
-                if (judgment == Judgment.Perfect || judgment == Judgment.Good)
-                {
-                    comboScale = 1.3f;
-                    cachedComboText = scoringSystem.Combo.ToString();
-                }
+            // コンボ加算アニメーション
+            if (judgment == Judgment.Perfect || judgment == Judgment.Good)
+            {
+                comboAnimation.AddCombo();
+            }
             }
         }
     }
@@ -288,8 +295,18 @@ public class GameplayView : UserControl, IAppState
 
         cachedCurrentTimeMs = chartTime + Utils.ConfigManager.JudgeOffset;
 
-        // コンボアニメーション減衰
-        comboScale = comboScale + (1.0f - comboScale) * 0.1f;
+        // コンボバウンド更新
+        if (scoringSystem.Combo != lastComboValue)
+        {
+            lastComboValue = scoringSystem.Combo;
+            combobounces = 0;
+        }
+
+        if (combobounces < 90)
+        {
+            combobounces += 3.0f; // 速度調整
+            if (combobounces > 90) combobounces = 90; // カウントを90でキャップ
+        }
 
         foreach (var note in chart.Notes)
         {
@@ -301,7 +318,6 @@ public class GameplayView : UserControl, IAppState
                 {
                     note.IsHit = true;
                     scoringSystem.AddScore(Judgment.Miss, false);
-                    comboScale = 1.0f; // リセット時はアニメーション無効
                 }
                 else if (isAutoplayEnabled && cachedCurrentTimeMs >= note.TimeMs)
                 {
@@ -332,7 +348,7 @@ public class GameplayView : UserControl, IAppState
                     else if (note.Type == NoteType.BigKa) { isLeftKaPressed = true; isRightKaPressed = true; leftKaStopwatch.Restart(); rightKaStopwatch.Restart(); }
 
                     // コンボ加算アニメーション
-                    comboScale = 1.3f;
+                    combobounces = 1;
                     cachedComboText = scoringSystem.Combo.ToString();
                 }
             }
@@ -401,6 +417,7 @@ public class GameplayView : UserControl, IAppState
     {
         base.OnPaint(e);
         Graphics g = e.Graphics;
+        Utils.SkinManager.RenderBackground(g, Width, Height);
         g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
 
         double currentPlayTimeMs = cachedCurrentTimeMs;
@@ -408,7 +425,22 @@ public class GameplayView : UserControl, IAppState
         float targetLineY = this.ClientSize.Height / 2f;
         const float widthPerBeat = 150f;
 
-        // 1. Input Effect Taiko Drum
+        // 1. Draw Lane Background
+        if (Utils.SkinManager.LaneImage != null)
+        {
+            float laneHeight = 130;
+            System.Drawing.Imaging.ColorMatrix matrix = new System.Drawing.Imaging.ColorMatrix();
+            matrix.Matrix33 = 0.5f; // 50% transparency
+            using var attributes = new System.Drawing.Imaging.ImageAttributes();
+            attributes.SetColorMatrix(matrix, System.Drawing.Imaging.ColorMatrixFlag.Default, System.Drawing.Imaging.ColorAdjustType.Bitmap);
+            
+            g.DrawImage(Utils.SkinManager.LaneImage, 
+                new Rectangle(0, (int)(targetLineY - laneHeight / 2), Width, (int)laneHeight),
+                0, 0, Utils.SkinManager.LaneImage.Width, Utils.SkinManager.LaneImage.Height,
+                GraphicsUnit.Pixel, attributes);
+        }
+
+        // 2. Input Effect Taiko Drum
         if (leftDonStopwatch.ElapsedMilliseconds > 100) isLeftDonPressed = false;
         if (rightDonStopwatch.ElapsedMilliseconds > 100) isRightDonPressed = false;
         if (leftKaStopwatch.ElapsedMilliseconds > 100) isLeftKaPressed = false;
@@ -444,45 +476,16 @@ public class GameplayView : UserControl, IAppState
         // Split line
         g.DrawLine(Pens.Black, drumX, drumY - outerRadius, drumX, drumY + outerRadius);
 
-        // 2. Combo (Inside Drum)
+        // 3. Combo (Inside Drum)
         if (scoringSystem.Combo >= 10)
         {
-            string comboStr = scoringSystem.Combo.ToString();
-            float displaySize = 24; // 30 -> 24 に微調整
-            using Font comboFontBig = new Font(Utils.FontManager.KantiryuFontFamily, displaySize, FontStyle.Bold);
-            using Font comboFontSmall = new Font(Utils.FontManager.KantiryuFontFamily, 16, FontStyle.Bold);
-            
-            // Custom string format for center alignment
-            using StringFormat sf = new StringFormat();
-            sf.Alignment = StringAlignment.Center;
-            sf.LineAlignment = StringAlignment.Center;
-
-            // Draw shadow/outline
-            Brush outlineBrush = Brushes.Black;
-            Brush fillBrush = Brushes.White;
-
-            float textYOffset = 18;
-
-            for (int dx = -2; dx <= 2; dx++)
-            {
-                for (int dy = -2; dy <= 2; dy++)
-                {
-                    if (dx != 0 || dy != 0)
-                    {
-                        g.DrawString(comboStr, comboFontBig, outlineBrush, drumX + dx, drumY - 10 + dy, sf);
-                        g.DrawString("コンボ", comboFontSmall, outlineBrush, drumX + dx, drumY + textYOffset + dy, sf);
-                    }
-                }
-            }
-            // Draw number fill
-            g.DrawString(comboStr, comboFontBig, fillBrush, drumX, drumY - 10, sf);
-            g.DrawString("コンボ", comboFontSmall, fillBrush, drumX, drumY + textYOffset, sf);
+            DrawCombo(g, scoringSystem.Combo, comboAnimation.Scale, drumX, drumY);
         }
 
-        // 3. Draw Target
+        // 4. Draw Target
         g.DrawEllipse(Pens.White, targetLineX - 40, targetLineY - 40, 80, 80);
 
-        // 4. Draw Barlines
+        // 5. Draw Barlines
         foreach (var bar in chart.Barlines)
         {
             if (!bar.IsVisible) continue;
@@ -495,28 +498,21 @@ public class GameplayView : UserControl, IAppState
             g.DrawLine(Pens.Gray, x, y - 50, x, y + 50);
         }
 
-        // 5. Draw Notes
+        // 6. Draw Notes
         foreach (var note in chart.Notes)
         {
             if (note.IsHit) continue;
             double diff = note.TimeMs - currentPlayTimeMs;
-            // 判定を大幅に緩和
             if (diff > 20000) continue;
             
             if (!note.IsVisible) continue;
-            
-            // ドロン対応
             if (isDoron) continue;
-
-            // 画面外（演奏済み）をスキップ
             if (diff < -1000) continue;
             
-            // 倍速対応 (スクロール速度反映)
             float pixelsPerMs = (float)(note.Bpm / 60000.0) * widthPerBeat * scrollSpeed;
             float x = targetLineX + (float)(diff * pixelsPerMs * note.ScrollFactorX);
             float y = targetLineY + (float)(diff * pixelsPerMs * note.ScrollFactorY);
             
-            // 描画範囲を緩和：画面外でも描画をスキップせず計算する
             if (x < -1000 || x > Width + 1000) continue;
             
             Brush brush = (note.Type == NoteType.Ka || note.Type == NoteType.BigKa) ? Brushes.DeepSkyBlue : Brushes.Red;
@@ -529,5 +525,50 @@ public class GameplayView : UserControl, IAppState
 
         g.DrawString($"Score: {scoringSystem.Score}", new Font(Utils.FontManager.KantiryuFontFamily, 12), Brushes.White, 10, 10);
         if (isAutoplayEnabled) g.DrawString("Auto Play", new Font(Utils.FontManager.KantiryuFontFamily, 12), Brushes.Yellow, 10, 50);
+    }
+
+    private void DrawCombo(Graphics g, int combo, float scale, float drumX, float drumY)
+    {
+        // 白色数字テクスチャを使用
+        if (Utils.SkinManager.ComboImage == null || Utils.SkinManager.ComboTextImage == null) return;
+
+        string comboStr = combo.ToString();
+        int digitCount = comboStr.Length;
+        float baseTextY = drumY - 10;
+        
+        // バウンドアニメーション
+        float bounceOffset = (combobounces >= 90) ? 0.0f : (float)(Math.Sin(combobounces / 90.0 * Math.PI) * -5.0);
+
+        // 数字画像の幅と高さ(見た目に合わせて少し縮小)
+        float digitWidth = Utils.SkinManager.ComboImage.Width / 10f;
+        float digitHeight = Utils.SkinManager.ComboImage.Height;
+        float drawScale = scale * 0.7f; // 30%小さく描画
+
+        // 数字描画（文字間隔を調整）
+        float letterSpacing = -5f * drawScale; // マイナス値で詰める
+        float totalWidth = digitCount * (digitWidth + letterSpacing) * drawScale;
+        float currentX = drumX - (totalWidth / 2f);
+
+        foreach (char c in comboStr)
+        {
+            int digit = c - '0';
+            Rectangle srcRect = new Rectangle((int)(digit * digitWidth), 0, (int)digitWidth, (int)digitHeight);
+            Rectangle destRect = new Rectangle((int)currentX, (int)(baseTextY + bounceOffset - (digitHeight * drawScale / 2f)), (int)(digitWidth * drawScale), (int)(digitHeight * drawScale));
+            g.DrawImage(Utils.SkinManager.ComboImage, destRect, srcRect, GraphicsUnit.Pixel);
+            currentX += (digitWidth + letterSpacing) * drawScale;
+        }
+
+        // コンボテキスト描画（白色のコンボテキストを使用）
+        g.DrawImage(Utils.SkinManager.ComboTextImage, drumX - (Utils.SkinManager.ComboTextImage.Width / 2f), baseTextY + 20);
+    }
+
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing)
+        {
+            comboFontBig.Dispose();
+            comboFontSmall.Dispose();
+        }
+        base.Dispose(disposing);
     }
 }

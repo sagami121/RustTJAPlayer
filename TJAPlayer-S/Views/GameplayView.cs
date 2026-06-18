@@ -558,8 +558,15 @@ public class GameplayView : UserControl, IAppState
             currentX += (digitWidth + letterSpacing) * drawScale;
         }
 
-        // コンボテキスト描画（白色のコンボテキストを使用）
-        g.DrawImage(Utils.SkinManager.ComboTextImage, drumX - (Utils.SkinManager.ComboTextImage.Width / 2f), baseTextY + 20);
+        // コンボテキスト描画（上側の白色のコンボテキストのみを使用）
+        Rectangle textSrcRect = new Rectangle(0, 0, Utils.SkinManager.ComboTextImage.Width, Utils.SkinManager.ComboTextImage.Height / 2);
+        Rectangle textDestRect = new Rectangle(
+            (int)(drumX - (Utils.SkinManager.ComboTextImage.Width / 2f)),
+            (int)(baseTextY + 20),
+            Utils.SkinManager.ComboTextImage.Width,
+            Utils.SkinManager.ComboTextImage.Height / 2
+        );
+        g.DrawImage(Utils.SkinManager.ComboTextImage, textDestRect, textSrcRect, GraphicsUnit.Pixel);
     }
 
     protected override void Dispose(bool disposing)

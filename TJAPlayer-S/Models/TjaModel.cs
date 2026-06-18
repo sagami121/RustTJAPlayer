@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Numerics;
 
 namespace TjaPlayer.Models;
 
@@ -9,8 +10,7 @@ public class Note
     public NoteType Type { get; set; }
     public double TimeMs { get; set; }
     public double EndTimeMs { get; set; }
-    public double ScrollFactorX { get; set; } = 1.0; 
-    public double ScrollFactorY { get; set; } = 0.0; 
+    public Complex ScrollValue { get; set; } = new Complex(1.0, 0.0);
     public double Bpm { get; set; }
     public bool IsHit { get; set; }
     public bool IsGogo { get; set; }      
@@ -21,8 +21,7 @@ public class Note
 public class Barline
 {
     public double TimeMs { get; set; }
-    public double ScrollFactorX { get; set; } = 1.0;
-    public double ScrollFactorY { get; set; } = 0.0;
+    public Complex ScrollValue { get; set; } = new Complex(1.0, 0.0);
     public double Bpm { get; set; } // 追加
     public bool IsVisible { get; set; } = true;
 }

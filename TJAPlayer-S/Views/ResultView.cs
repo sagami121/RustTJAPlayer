@@ -13,7 +13,7 @@ public class ResultView : UserControl, IAppState
     public event Action? RequestedExit;
 
     // 描画キャッシュ
-    private string titleText;
+    private string songTitle;
     private string perfectText;
     private string goodText;
     private string missText;
@@ -23,12 +23,12 @@ public class ResultView : UserControl, IAppState
     public ResultView(PlayResult result)
     {
         this.result = result;
+        this.songTitle = result.SongTitle;
         Dock = DockStyle.Fill;
         BackColor = Color.Black;
         DoubleBuffered = true;
 
         // 文字列キャッシュの生成
-        titleText = $"Title: {result.SongTitle}";
         perfectText = $"良: {result.PerfectCount}";
         goodText = $"可: {result.GoodCount}";
         missText = $"不可: {result.MissCount}";
@@ -58,7 +58,10 @@ public class ResultView : UserControl, IAppState
         Utils.SkinManager.RenderBackground(g, Width, Height);
         g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
 
-        g.DrawString(titleText, new Font("Arial", 30, FontStyle.Bold), Brushes.White, 50, 50);
+        // 曲タイトル表示 (右上に表示)
+        Font titleFont = new Font(Utils.FontManager.KantiryuFontFamily, 20);
+        SizeF titleSize = g.MeasureString(songTitle, titleFont);
+        g.DrawString(songTitle, titleFont, Brushes.White, Width - titleSize.Width - 10, 10);
         
         g.DrawString(perfectText, new Font("Arial", 25), Brushes.Gold, 50, 150);
         g.DrawString(goodText, new Font("Arial", 25), Brushes.White, 50, 200);

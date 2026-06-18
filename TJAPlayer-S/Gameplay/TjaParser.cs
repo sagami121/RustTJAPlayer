@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Numerics;
 using TjaPlayer.Models;
 using TjaPlayer.Utils;
 
@@ -13,7 +14,7 @@ public class TjaParser
     {
         public char NoteChar;
         public double Bpm;
-        public double Scroll;
+        public Complex Scroll;
     }
 
     public static Score Parse(string filePath)
@@ -131,8 +132,7 @@ public class TjaParser
     private class ParserState
     {
         public double CurrentBpm;
-        public double ScrollX = 1.0;
-        public double ScrollY = 0.0;
+        public Complex ScrollValue = new Complex(1.0, 0.0);
         public double MeasureNum = 4.0;
         public double MeasureDen = 4.0;
         public bool IsGogo = false;
@@ -158,8 +158,18 @@ public class TjaParser
 
         var handlers = new Dictionary<string, CommandHandler>(StringComparer.OrdinalIgnoreCase);
         handlers["#BPMCHANGE"] = (string arg, ParserState s, ref double t, TjaChart c, ref Note? r) => s.CurrentBpm = CTExpression.Evaluate(arg, 0);
-        handlers["#SCROLL"] = (string arg, ParserState s, ref double t, TjaChart c, ref Note? r) => s.ScrollX = CTExpression.Evaluate(arg, 0);
-        handlers["#SCROLL_EXPR"] = (string arg, ParserState s, ref double t, TjaChart c, ref Note? r) => s.ScrollX = CTExpression.Evaluate(arg, 0);
+        handlers["#SCROLL"] = (string arg, ParserState s, ref double t, TjaChart c, ref Note? r) => {
+            var parts = arg.Split(',');
+            double magnitude = CTExpression.Evaluate(parts[0], 0);
+            double angle = parts.Length > 1 ? CTExpression.Evaluate(parts[1], 0) * (Math.PI / 180.0) : 0.0;
+            s.ScrollValue = Complex.FromPolarCoordinates(magnitude, angle);
+        };
+        handlers["#SCROLL_EXPR"] = (string arg, ParserState s, ref double t, TjaChart c, ref Note? r) => {
+            var parts = arg.Split(',');
+            double magnitude = CTExpression.Evaluate(parts[0], 0);
+            double angle = parts.Length > 1 ? CTExpression.Evaluate(parts[1], 0) * (Math.PI / 180.0) : 0.0;
+            s.ScrollValue = Complex.FromPolarCoordinates(magnitude, angle);
+        };
         handlers["#BARLINEON"] = (string arg, ParserState s, ref double t, TjaChart c, ref Note? r) => s.BarlineVisible = true;
         handlers["#BARLINEOFF"] = (string arg, ParserState s, ref double t, TjaChart c, ref Note? r) => s.BarlineVisible = false;
         handlers["#MEASURE"] = (string arg, ParserState s, ref double t, TjaChart c, ref Note? r) => {
@@ -221,7 +231,7 @@ public class TjaParser
                 }
                 else if (c >= '0' && c <= '9')
                 {
-                    pendingNotes.Add(new PendingNote { NoteChar = c, Bpm = state.CurrentBpm, Scroll = state.ScrollX });
+                    pendingNotes.Add(new PendingNote { NoteChar = c, Bpm = state.CurrentBpm, Scroll = state.ScrollValue });
                 }
             }
         }
@@ -244,8 +254,7 @@ public class TjaParser
         chart.Barlines.Add(new Barline 
         { 
             TimeMs = currentAbsTimeMs, 
-            ScrollFactorX = state.ScrollX, 
-            ScrollFactorY = state.ScrollY,
+            ScrollValue = state.ScrollValue,
             Bpm = effectiveBpm,
             IsVisible = state.BarlineVisible 
         });
@@ -263,8 +272,7 @@ public class TjaParser
                 { 
                     Type = (NoteType)(pNote.NoteChar - '0'), 
                     TimeMs = noteTime, 
-                    ScrollFactorX = pNote.Scroll,
-                    ScrollFactorY = state.ScrollY,
+                    ScrollValue = pNote.Scroll,
                     Bpm = pNote.Bpm,
                     IsGogo = state.IsGogo
                 };
@@ -281,8 +289,7 @@ public class TjaParser
                 { 
                     Type = (NoteType)(pNote.NoteChar - '0'), 
                     TimeMs = noteTime, 
-                    ScrollFactorX = pNote.Scroll,
-                    ScrollFactorY = state.ScrollY,
+                    ScrollValue = pNote.Scroll,
                     Bpm = pNote.Bpm,
                     IsGogo = state.IsGogo
                 });

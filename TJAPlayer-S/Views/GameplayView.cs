@@ -4,6 +4,7 @@ using System.IO;
 using System;
 using System.Drawing;
 using System.Linq;
+using System.Numerics;
 using TjaPlayer;
 using TjaPlayer.Audio;
 using TjaPlayer.Gameplay;
@@ -20,6 +21,7 @@ public class GameplayView : UserControl, IAppState
     private readonly JudgmentSystem judgmentSystem;
     private readonly int audioStream;
     private readonly TjaChart chart;
+    private readonly string songTitle;
     
     // 演奏オプション
     private Utils.ConfigManager.NoteMod noteMod = Utils.ConfigManager.CurrentNoteMod;
@@ -63,10 +65,11 @@ public class GameplayView : UserControl, IAppState
 
     public event Action? RequestedExit;
 
-    public GameplayView(TjaChart chart, AudioManager audioManager)
+    public GameplayView(TjaChart chart, AudioManager audioManager, string songTitle)
     {
         this.chart = chart;
         this.audioManager = audioManager;
+        this.songTitle = songTitle;
         this.scoringSystem = new ScoringSystem();
         this.judgmentSystem = new JudgmentSystem();
         
@@ -448,8 +451,8 @@ public class GameplayView : UserControl, IAppState
 
         float drumX = 65f;
         float drumY = targetLineY;
-        float outerRadius = 55f;
-        float innerRadius = 40f;
+        float outerRadius = 45f;
+        float innerRadius = 32f;
 
         // Draw outer rim (Ka)
         using (SolidBrush leftKaBrush = new SolidBrush(isLeftKaPressed ? Color.DeepSkyBlue : Color.Gray))
@@ -493,8 +496,9 @@ public class GameplayView : UserControl, IAppState
             if (diff < -1000 || diff > 4000) continue;
             
             float pixelsPerMs = (float)(bar.Bpm / 60000.0) * widthPerBeat * scrollSpeed;
-            float x = targetLineX + (float)(diff * pixelsPerMs * bar.ScrollFactorX);
-            float y = targetLineY + (float)(diff * pixelsPerMs * bar.ScrollFactorY);
+            Complex scrollOffset = bar.ScrollValue * (diff * pixelsPerMs);
+            float x = targetLineX + (float)scrollOffset.Real;
+            float y = targetLineY + (float)scrollOffset.Imaginary;
             g.DrawLine(Pens.Gray, x, y - 50, x, y + 50);
         }
 
@@ -510,8 +514,9 @@ public class GameplayView : UserControl, IAppState
             if (diff < -1000) continue;
             
             float pixelsPerMs = (float)(note.Bpm / 60000.0) * widthPerBeat * scrollSpeed;
-            float x = targetLineX + (float)(diff * pixelsPerMs * note.ScrollFactorX);
-            float y = targetLineY + (float)(diff * pixelsPerMs * note.ScrollFactorY);
+            Complex scrollOffset = note.ScrollValue * (diff * pixelsPerMs);
+            float x = targetLineX + (float)scrollOffset.Real;
+            float y = targetLineY + (float)scrollOffset.Imaginary;
             
             if (x < -1000 || x > Width + 1000) continue;
             
@@ -525,6 +530,10 @@ public class GameplayView : UserControl, IAppState
 
         g.DrawString($"Score: {scoringSystem.Score}", new Font(Utils.FontManager.KantiryuFontFamily, 12), Brushes.White, 10, 10);
         if (isAutoplayEnabled) g.DrawString("Auto Play", new Font(Utils.FontManager.KantiryuFontFamily, 12), Brushes.Yellow, 10, 50);
+        
+        // 曲タイトル表示 (右上に表示)
+        SizeF titleSize = g.MeasureString(songTitle, new Font(Utils.FontManager.KantiryuFontFamily, 16));
+        g.DrawString(songTitle, new Font(Utils.FontManager.KantiryuFontFamily, 16), Brushes.White, Width - titleSize.Width - 10, 10);
     }
 
     private void DrawCombo(Graphics g, int combo, float scale, float drumX, float drumY)
@@ -534,18 +543,20 @@ public class GameplayView : UserControl, IAppState
 
         string comboStr = combo.ToString();
         int digitCount = comboStr.Length;
-        float baseTextY = drumY - 10;
+        
+        // ベース位置を太鼓の中心(drumY)に設定
+        float baseTextY = drumY;
         
         // バウンドアニメーション
         float bounceOffset = (combobounces >= 90) ? 0.0f : (float)(Math.Sin(combobounces / 90.0 * Math.PI) * -5.0);
 
-        // 数字画像の幅と高さ(見た目に合わせて少し縮小)
+        // 数字画像の幅と高さ(見た目に合わせて調整)
         float digitWidth = Utils.SkinManager.ComboImage.Width / 10f;
         float digitHeight = Utils.SkinManager.ComboImage.Height;
-        float drawScale = scale * 0.7f; // 30%小さく描画
+        float drawScale = scale * 0.7f;
 
         // 数字描画（文字間隔を調整）
-        float letterSpacing = -5f * drawScale; // マイナス値で詰める
+        float letterSpacing = -10f * drawScale;
         float totalWidth = digitCount * (digitWidth + letterSpacing) * drawScale;
         float currentX = drumX - (totalWidth / 2f);
 
@@ -553,6 +564,7 @@ public class GameplayView : UserControl, IAppState
         {
             int digit = c - '0';
             Rectangle srcRect = new Rectangle((int)(digit * digitWidth), 0, (int)digitWidth, (int)digitHeight);
+            // 太鼓の真ん中に来るように位置を調整
             Rectangle destRect = new Rectangle((int)currentX, (int)(baseTextY + bounceOffset - (digitHeight * drawScale / 2f)), (int)(digitWidth * drawScale), (int)(digitHeight * drawScale));
             g.DrawImage(Utils.SkinManager.ComboImage, destRect, srcRect, GraphicsUnit.Pixel);
             currentX += (digitWidth + letterSpacing) * drawScale;
@@ -561,10 +573,10 @@ public class GameplayView : UserControl, IAppState
         // コンボテキスト描画（上側の白色のコンボテキストのみを使用）
         Rectangle textSrcRect = new Rectangle(0, 0, Utils.SkinManager.ComboTextImage.Width, Utils.SkinManager.ComboTextImage.Height / 2);
         Rectangle textDestRect = new Rectangle(
-            (int)(drumX - (Utils.SkinManager.ComboTextImage.Width / 2f)),
+            (int)(drumX - (Utils.SkinManager.ComboTextImage.Width * 0.8f / 2f)),
             (int)(baseTextY + 20),
-            Utils.SkinManager.ComboTextImage.Width,
-            Utils.SkinManager.ComboTextImage.Height / 2
+            (int)(Utils.SkinManager.ComboTextImage.Width * 0.8f),
+            (int)(Utils.SkinManager.ComboTextImage.Height / 2 * 0.8f)
         );
         g.DrawImage(Utils.SkinManager.ComboTextImage, textDestRect, textSrcRect, GraphicsUnit.Pixel);
     }

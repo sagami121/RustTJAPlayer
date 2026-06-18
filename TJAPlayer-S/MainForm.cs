@@ -167,17 +167,17 @@ public partial class MainForm : Form
     {
         Controls.Clear();
         var diffSelectView = new DifficultySelectView(score, audioManager);
-        diffSelectView.DifficultySelected += (chart) => SwitchToGameplay(chart);
+        diffSelectView.DifficultySelected += (chart) => SwitchToGameplay(chart, score.Title);
         diffSelectView.RequestedExit += () => ReturnToSongSelect();
         stateManager?.ChangeState(diffSelectView);
         Controls.Add(diffSelectView);
         diffSelectView.Focus();
     }
 
-    public void SwitchToGameplay(TjaChart chart)
+    public void SwitchToGameplay(TjaChart chart, string songTitle)
     {
         Controls.Clear();
-        var gameplayView = new GameplayView(chart, audioManager);
+        var gameplayView = new GameplayView(chart, audioManager, songTitle);
         gameplayView.SongFinished += (result) => SwitchToResult(result);
         gameplayView.RequestedExit += () => ReturnToSongSelect(); // 追加
         stateManager?.ChangeState(gameplayView);

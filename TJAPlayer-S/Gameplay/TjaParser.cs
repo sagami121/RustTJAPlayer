@@ -180,6 +180,7 @@ public class TjaParser
         handlers["#GOGOSTART"] = (string arg, ParserState s, ref double t, TjaChart c, ref Note? r) => s.IsGogo = true;
         handlers["#GOGOEND"] = (string arg, ParserState s, ref double t, TjaChart c, ref Note? r) => s.IsGogo = false;
         handlers["#DELAY"] = (string arg, ParserState s, ref double t, TjaChart c, ref Note? r) => t += CTExpression.Evaluate(arg, 0) * 1000.0;
+        handlers["#LYRIC"] = (string arg, ParserState s, ref double t, TjaChart c, ref Note? r) => c.Lyrics.Add(new LyricEvent { TimeMs = t, Text = arg });
         
         handlers["#IF"] = (string arg, ParserState s, ref double t, TjaChart c, ref Note? r) => {
             bool parentIsSkipping = s.IsSkipping;

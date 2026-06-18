@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System;
 using System.Drawing;
+using System.Drawing.Drawing2D;
 using System.Linq;
 using System.Numerics;
 using TjaPlayer;
@@ -53,12 +54,18 @@ public class GameplayView : UserControl, IAppState
     private double lastAutoplayHitTimeMs = 0;
 
     // コンボ演出用フィールド
-    private string cachedComboText = "";
     private Animations.ComboAnimation comboAnimation = new Animations.ComboAnimation();
-    private float combobounces = 0;
-    private int lastComboValue = 0;
+    private float combobounces = 90; // アニメーション終了状態から開始
     private Font comboFontBig;
     private Font comboFontSmall;
+    
+    // 判定表示用フィールド
+    private List<Models.JudgmentDisplay> activeJudgments = new();
+    private Font judgmentFont = new Font(Utils.FontManager.KantiryuFontFamily, 20, FontStyle.Bold);
+
+    // 歌詞表示用
+    private string currentLyric = "";
+    private Font lyricFont = new Font("Meiryo", 30, FontStyle.Bold);
 
     private double cachedCurrentTimeMs = 0;
     private double CurrentPlayTimeMs => cachedCurrentTimeMs;
@@ -207,6 +214,7 @@ public class GameplayView : UserControl, IAppState
         if (activeRoll != null)
         {
             scoringSystem.AddScore(Judgment.Perfect, false);
+            TriggerComboAnimation();
             return;
         }
 
@@ -246,12 +254,17 @@ public class GameplayView : UserControl, IAppState
             {
                 bool isBigNote = (closestNote.Type == NoteType.BigDon || closestNote.Type == NoteType.BigKa);
                 scoringSystem.AddScore(judgment, isBigNote);
+                
+                string text = judgment switch { Judgment.Perfect => "良", Judgment.Good => "可", Judgment.Miss => "不可", _ => "" };
+                Color color = judgment switch { Judgment.Perfect => Color.Gold, Judgment.Good => Color.White, Judgment.Miss => Color.DeepSkyBlue, _ => Color.Black };
+                activeJudgments.Add(new Models.JudgmentDisplay(text, color, this.ClientSize.Height / 2f - 100));
 
-            // コンボ加算アニメーション
-            if (judgment == Judgment.Perfect || judgment == Judgment.Good)
-            {
-                comboAnimation.AddCombo();
-            }
+                // コンボ加算アニメーション
+                if (judgment == Judgment.Perfect || judgment == Judgment.Good)
+                {
+                    TriggerComboAnimation();
+                }
+
             }
         }
     }
@@ -261,6 +274,12 @@ public class GameplayView : UserControl, IAppState
         audioManager.StopTrack(audioStream);
         if (configChanged) Utils.ConfigManager.Save();
         base.OnHandleDestroyed(e);
+    }
+
+    private void TriggerComboAnimation()
+    {
+        combobounces = 0; // アニメーションを最初から再生させる
+        comboAnimation.AddCombo();
     }
 
     public new void Update()
@@ -295,22 +314,20 @@ public class GameplayView : UserControl, IAppState
                 return;
             }
         }
+cachedCurrentTimeMs = chartTime + Utils.ConfigManager.JudgeOffset;
 
-        cachedCurrentTimeMs = chartTime + Utils.ConfigManager.JudgeOffset;
+currentLyric = chart.Lyrics.LastOrDefault(l => l.TimeMs <= cachedCurrentTimeMs)?.Text ?? "";
 
-        // コンボバウンド更新
-        if (scoringSystem.Combo != lastComboValue)
-        {
-            lastComboValue = scoringSystem.Combo;
-            combobounces = 0;
-        }
+if (combobounces < 90)
 
-        if (combobounces < 90)
-        {
-            combobounces += 3.0f; // 速度調整
-            if (combobounces > 90) combobounces = 90; // カウントを90でキャップ
-        }
+{
+    combobounces += 3.0f; // 速度調整
+    if (combobounces > 90) combobounces = 90; // カウントを90でキャップ
+}
 
+comboAnimation.Update();
+
+activeJudgments.RemoveAll(j => j.Timer.ElapsedMilliseconds > Models.JudgmentDisplay.DurationMs);
         foreach (var note in chart.Notes)
         {
             if (note.IsHit) continue;
@@ -350,9 +367,7 @@ public class GameplayView : UserControl, IAppState
                     }
                     else if (note.Type == NoteType.BigKa) { isLeftKaPressed = true; isRightKaPressed = true; leftKaStopwatch.Restart(); rightKaStopwatch.Restart(); }
 
-                    // コンボ加算アニメーション
-                    combobounces = 1;
-                    cachedComboText = scoringSystem.Combo.ToString();
+                    TriggerComboAnimation();
                 }
             }
             else if (note.Type == NoteType.Roll || note.Type == NoteType.BigRoll || note.Type == NoteType.Balloon)
@@ -368,6 +383,7 @@ public class GameplayView : UserControl, IAppState
                             audioManager.PlaySoundEffect(@"Theme\default\sound\dong.wav");
                             bool isBigNote = (note.Type == NoteType.BigRoll);
                             scoringSystem.AddScore(Judgment.Perfect, isBigNote);
+                            TriggerComboAnimation();
                             
                             // Simulate roll effect
                             if (isRightDonPressed)
@@ -484,6 +500,19 @@ public class GameplayView : UserControl, IAppState
         {
             DrawCombo(g, scoringSystem.Combo, comboAnimation.Scale, drumX, drumY);
         }
+        
+        // Draw Judgments
+        foreach (var jd in activeJudgments)
+        {
+            float elapsed = jd.Timer.ElapsedMilliseconds;
+            float alpha = Math.Max(0, 255 - (elapsed / Models.JudgmentDisplay.DurationMs * 255));
+            float yOffset = -(elapsed / Models.JudgmentDisplay.DurationMs * 50); // 上に移動
+            
+            using (Brush brush = new SolidBrush(Color.FromArgb((int)alpha, jd.Color)))
+            {
+                g.DrawString(jd.Text, judgmentFont, brush, targetLineX - 40, jd.StartY + yOffset);
+            }
+        }
 
         // 4. Draw Target
         g.DrawEllipse(Pens.White, targetLineX - 40, targetLineY - 40, 80, 80);
@@ -531,9 +560,35 @@ public class GameplayView : UserControl, IAppState
         g.DrawString($"Score: {scoringSystem.Score}", new Font(Utils.FontManager.KantiryuFontFamily, 12), Brushes.White, 10, 10);
         if (isAutoplayEnabled) g.DrawString("Auto Play", new Font(Utils.FontManager.KantiryuFontFamily, 12), Brushes.Yellow, 10, 50);
         
-        // 曲タイトル表示 (右上に表示)
-        SizeF titleSize = g.MeasureString(songTitle, new Font(Utils.FontManager.KantiryuFontFamily, 16));
-        g.DrawString(songTitle, new Font(Utils.FontManager.KantiryuFontFamily, 16), Brushes.White, Width - titleSize.Width - 10, 10);
+        // 曲タイトル表示
+        Font titleFont = new Font(Utils.FontManager.KantiryuFontFamily, 16);
+        SizeF titleSize = g.MeasureString(songTitle, titleFont);
+        g.DrawString(songTitle, titleFont, Brushes.White, Width - titleSize.Width - 10, 10);
+
+        // 歌詞描画
+        DrawLyric(g);
+    }
+
+    private void DrawLyric(Graphics g)
+    {
+        if (string.IsNullOrEmpty(currentLyric)) return;
+        
+        GraphicsPath gp = new GraphicsPath();
+        gp.AddString(currentLyric, lyricFont.FontFamily, (int)lyricFont.Style, lyricFont.Size, new Point(0, 0), StringFormat.GenericDefault);
+        
+        RectangleF rect = gp.GetBounds();
+        float x = (Width - rect.Width) / 2f;
+        float y = Height - 100;
+        
+        Matrix m = new Matrix();
+        m.Translate(x, y);
+        gp.Transform(m);
+        
+        g.DrawPath(new Pen(Color.Blue, 3), gp);
+        g.FillPath(Brushes.White, gp);
+        
+        gp.Dispose();
+        m.Dispose();
     }
 
     private void DrawCombo(Graphics g, int combo, float scale, float drumX, float drumY)
@@ -553,10 +608,10 @@ public class GameplayView : UserControl, IAppState
         // 数字画像の幅と高さ(見た目に合わせて調整)
         float digitWidth = Utils.SkinManager.ComboImage.Width / 10f;
         float digitHeight = Utils.SkinManager.ComboImage.Height;
-        float drawScale = scale * 0.7f;
+        float drawScale = 0.7f;
 
         // 数字描画（文字間隔を調整）
-        float letterSpacing = -10f * drawScale;
+        float letterSpacing = -5f * drawScale;
         float totalWidth = digitCount * (digitWidth + letterSpacing) * drawScale;
         float currentX = drumX - (totalWidth / 2f);
 
@@ -570,13 +625,14 @@ public class GameplayView : UserControl, IAppState
             currentX += (digitWidth + letterSpacing) * drawScale;
         }
 
-        // コンボテキスト描画（上側の白色のコンボテキストのみを使用）
+        // コンボテキスト描画
+        float textYOffset = (digitHeight * drawScale / 2f) + 5f; // 数字の下に少しオフセット
         Rectangle textSrcRect = new Rectangle(0, 0, Utils.SkinManager.ComboTextImage.Width, Utils.SkinManager.ComboTextImage.Height / 2);
         Rectangle textDestRect = new Rectangle(
-            (int)(drumX - (Utils.SkinManager.ComboTextImage.Width * 0.8f / 2f)),
-            (int)(baseTextY + 20),
-            (int)(Utils.SkinManager.ComboTextImage.Width * 0.8f),
-            (int)(Utils.SkinManager.ComboTextImage.Height / 2 * 0.8f)
+            (int)(drumX - (Utils.SkinManager.ComboTextImage.Width * 0.7f / 2f)), 
+            (int)(baseTextY + textYOffset), // bounceOffsetを削除
+            (int)(Utils.SkinManager.ComboTextImage.Width * 0.7f),
+            (int)(Utils.SkinManager.ComboTextImage.Height / 2 * 0.7f)
         );
         g.DrawImage(Utils.SkinManager.ComboTextImage, textDestRect, textSrcRect, GraphicsUnit.Pixel);
     }
@@ -587,6 +643,7 @@ public class GameplayView : UserControl, IAppState
         {
             comboFontBig.Dispose();
             comboFontSmall.Dispose();
+            lyricFont.Dispose();
         }
         base.Dispose(disposing);
     }

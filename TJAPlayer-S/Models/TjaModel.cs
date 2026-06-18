@@ -26,10 +26,17 @@ public class Barline
     public bool IsVisible { get; set; } = true;
 }
 
+public class LyricEvent
+{
+    public double TimeMs { get; set; }
+    public string Text { get; set; } = "";
+}
+
 public class TjaChart
 {
     public List<Note> Notes { get; set; } = new List<Note>();
     public List<Barline> Barlines { get; set; } = new List<Barline>();
+    public List<LyricEvent> Lyrics { get; set; } = new List<LyricEvent>();
     public double WaveOffsetMs { get; set; }   // OFFSET値 (秒換算してミリ秒に)
     public string AudioFileName { get; set; } = "";  // WAVE値
     public string DirectoryPath { get; set; } = ""; // 譜面ファイルのディレクトリ

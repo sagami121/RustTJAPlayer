@@ -133,6 +133,7 @@ public class TjaParser
     {
         public double CurrentBpm;
         public Complex ScrollValue = new Complex(1.0, 0.0);
+        public BranchType CurrentBranch = BranchType.Normal; // 追加
         public double MeasureNum = 4.0;
         public double MeasureDen = 4.0;
         public bool IsGogo = false;
@@ -181,6 +182,13 @@ public class TjaParser
         handlers["#GOGOEND"] = (string arg, ParserState s, ref double t, TjaChart c, ref Note? r) => s.IsGogo = false;
         handlers["#DELAY"] = (string arg, ParserState s, ref double t, TjaChart c, ref Note? r) => t += CTExpression.Evaluate(arg, 0) * 1000.0;
         handlers["#LYRIC"] = (string arg, ParserState s, ref double t, TjaChart c, ref Note? r) => c.Lyrics.Add(new LyricEvent { TimeMs = t, Text = arg });
+        
+        // 分岐命令ハンドラ
+        handlers["#BRANCHSTART"] = (string arg, ParserState s, ref double t, TjaChart c, ref Note? r) => { /* 条件解析は複雑なため後回し */ };
+        handlers["#N"] = (string arg, ParserState s, ref double t, TjaChart c, ref Note? r) => s.CurrentBranch = BranchType.Normal;
+        handlers["#E"] = (string arg, ParserState s, ref double t, TjaChart c, ref Note? r) => s.CurrentBranch = BranchType.Professional;
+        handlers["#M"] = (string arg, ParserState s, ref double t, TjaChart c, ref Note? r) => s.CurrentBranch = BranchType.Master;
+        handlers["#BRANCHEND"] = (string arg, ParserState s, ref double t, TjaChart c, ref Note? r) => s.CurrentBranch = BranchType.Normal;
         
         handlers["#IF"] = (string arg, ParserState s, ref double t, TjaChart c, ref Note? r) => {
             bool parentIsSkipping = s.IsSkipping;
@@ -275,7 +283,8 @@ public class TjaParser
                     TimeMs = noteTime, 
                     ScrollValue = pNote.Scroll,
                     Bpm = pNote.Bpm,
-                    IsGogo = state.IsGogo
+                    IsGogo = state.IsGogo,
+                    Branch = state.CurrentBranch // 追加
                 };
                 chart.Notes.Add(activeRollNote);
             }
@@ -292,7 +301,8 @@ public class TjaParser
                     TimeMs = noteTime, 
                     ScrollValue = pNote.Scroll,
                     Bpm = pNote.Bpm,
-                    IsGogo = state.IsGogo
+                    IsGogo = state.IsGogo,
+                    Branch = state.CurrentBranch // 追加
                 });
             }
         }

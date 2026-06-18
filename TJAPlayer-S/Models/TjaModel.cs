@@ -4,10 +4,12 @@ using System.Numerics;
 namespace TjaPlayer.Models;
 
 public enum NoteType { None, Don = 1, Ka, BigDon, BigKa, Roll, BigRoll, End = 7, Balloon = 8 }
+public enum BranchType { Normal, Professional, Master }
 
 public class Note
 {
     public NoteType Type { get; set; }
+    public BranchType Branch { get; set; } = BranchType.Normal; // 追加
     public double TimeMs { get; set; }
     public double EndTimeMs { get; set; }
     public Complex ScrollValue { get; set; } = new Complex(1.0, 0.0);

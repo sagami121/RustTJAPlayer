@@ -66,6 +66,10 @@ public class GameplayView : UserControl, IAppState
     // 歌詞表示用
     private string currentLyric = "";
     private Font lyricFont = new Font("Meiryo", 30, FontStyle.Bold);
+    
+    // 分岐表示用
+    private Models.BranchType currentBranch = Models.BranchType.Normal;
+    private Font branchFont = new Font("Meiryo", 16, FontStyle.Bold);
 
     private double cachedCurrentTimeMs = 0;
     private double CurrentPlayTimeMs => cachedCurrentTimeMs;
@@ -318,8 +322,10 @@ cachedCurrentTimeMs = chartTime + Utils.ConfigManager.JudgeOffset;
 
 currentLyric = chart.Lyrics.LastOrDefault(l => l.TimeMs <= cachedCurrentTimeMs)?.Text ?? "";
 
-if (combobounces < 90)
+var nextNote = chart.Notes.FirstOrDefault(n => !n.IsHit && n.TimeMs >= cachedCurrentTimeMs);
+if (nextNote != null) currentBranch = nextNote.Branch;
 
+if (combobounces < 90)
 {
     combobounces += 3.0f; // 速度調整
     if (combobounces > 90) combobounces = 90; // カウントを90でキャップ
@@ -535,6 +541,9 @@ activeJudgments.RemoveAll(j => j.Timer.ElapsedMilliseconds > Models.JudgmentDisp
         foreach (var note in chart.Notes)
         {
             if (note.IsHit) continue;
+            // 現在の分岐タイプと一致しないノーツはスキップ
+            if (note.Branch != currentBranch) continue;
+            
             double diff = note.TimeMs - currentPlayTimeMs;
             if (diff > 20000) continue;
             
@@ -564,6 +573,10 @@ activeJudgments.RemoveAll(j => j.Timer.ElapsedMilliseconds > Models.JudgmentDisp
         Font titleFont = new Font(Utils.FontManager.KantiryuFontFamily, 16);
         SizeF titleSize = g.MeasureString(songTitle, titleFont);
         g.DrawString(songTitle, titleFont, Brushes.White, Width - titleSize.Width - 10, 10);
+
+        // 分岐表示
+        string branchText = currentBranch switch { Models.BranchType.Normal => "普通", Models.BranchType.Professional => "玄人", Models.BranchType.Master => "達人", _ => "" };
+        g.DrawString(branchText, branchFont, new SolidBrush(Color.FromArgb(128, Color.White)), 260, 110);
 
         // 歌詞描画
         DrawLyric(g);
@@ -644,6 +657,7 @@ activeJudgments.RemoveAll(j => j.Timer.ElapsedMilliseconds > Models.JudgmentDisp
             comboFontBig.Dispose();
             comboFontSmall.Dispose();
             lyricFont.Dispose();
+            branchFont.Dispose();
         }
         base.Dispose(disposing);
     }

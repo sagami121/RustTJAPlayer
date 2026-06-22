@@ -27,6 +27,13 @@ public class Score
     public double MinBpm { get; set; }
     public double MaxBpm { get; set; }
 
+    // Score initialization values from TJA
+    public int ScoreInit { get; set; } = 0;
+    public int ScoreDiff { get; set; } = 0;
+
+    // Background video file
+    public string BackgroundVideo { get; set; } = "";
+
     // Reference to the actual chart data if loaded
     public Dictionary<string, TjaChart> Charts { get; set; } = new();
 }

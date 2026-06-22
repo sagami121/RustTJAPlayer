@@ -9,6 +9,7 @@ public static class ConfigManager
 
     public static bool Autoplay { get; set; } = false;
     public static double JudgeOffset { get; set; } = 0.0; // ミリ秒単位でのタイミング微調整
+    public static double InputAdjustTimeMs { get; set; } = 0.0; // ミリ秒単位での入力タイミング調整
     public static double PlaybackSpeed { get; set; } = 1.0; // 再生速度 (1.0 = 標準)
     
     // 演奏オプション
@@ -22,7 +23,7 @@ public static class ConfigManager
     public static void Load()
     {
         if (!File.Exists(ConfigPath)) return;
-        
+
         var lines = File.ReadAllLines(ConfigPath);
         foreach (var line in lines)
         {
@@ -30,6 +31,10 @@ public static class ConfigManager
             if (line.StartsWith("JudgeOffset="))
             {
                 if (double.TryParse(line.Substring(12), out var jo)) JudgeOffset = jo;
+            }
+            if (line.StartsWith("InputAdjustTimeMs="))
+            {
+                if (double.TryParse(line.Substring(18), out var ia)) InputAdjustTimeMs = ia;
             }
             if (line.StartsWith("PlaybackSpeed="))
             {
@@ -52,9 +57,10 @@ public static class ConfigManager
 
     public static void Save()
     {
-        File.WriteAllLines(ConfigPath, new[] { 
+        File.WriteAllLines(ConfigPath, new[] {
             $"Autoplay={Autoplay}",
             $"JudgeOffset={JudgeOffset}",
+            $"InputAdjustTimeMs={InputAdjustTimeMs}",
             $"PlaybackSpeed={PlaybackSpeed}",
             $"NoteMod={CurrentNoteMod}",
             $"Doron={IsDoron}",

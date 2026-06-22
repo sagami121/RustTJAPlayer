@@ -23,11 +23,21 @@ public class GameplayView : UserControl, IAppState
     private readonly int audioStream;
     private readonly TjaChart chart;
     private readonly string songTitle;
-    
+
     // 演奏オプション
     private Utils.ConfigManager.NoteMod noteMod = Utils.ConfigManager.CurrentNoteMod;
     private bool isDoron = Utils.ConfigManager.IsDoron;
     private int scrollSpeed = Utils.ConfigManager.ScrollSpeed;
+
+    // State accessors for pause functionality
+    public int AudioStream => audioStream;
+    public TjaChart Chart => chart;
+    public string SongTitle => songTitle;
+    public int ScoreInit => scoringSystem.ScoreInit;
+    public int ScoreDiff => scoringSystem.ScoreDiff;
+    public double CurrentChartTimeMs => cachedCurrentTimeMs;
+    public ScoringSystem ScoringSystem => scoringSystem;
+    public JudgmentSystem JudgmentSystem => judgmentSystem;
     
     // 高精度タイマー
     private System.Diagnostics.Stopwatch playStopwatch = new();
@@ -76,12 +86,12 @@ public class GameplayView : UserControl, IAppState
 
     public event Action? RequestedExit;
 
-    public GameplayView(TjaChart chart, AudioManager audioManager, string songTitle)
+    public GameplayView(TjaChart chart, AudioManager audioManager, string songTitle, int scoreInit = 0, int scoreDiff = 0)
     {
         this.chart = chart;
         this.audioManager = audioManager;
         this.songTitle = songTitle;
-        this.scoringSystem = new ScoringSystem();
+        this.scoringSystem = new ScoringSystem(scoreInit, scoreDiff);
         this.judgmentSystem = new JudgmentSystem();
         
         comboFontBig = new Font(Utils.FontManager.KantiryuFontFamily, 24, FontStyle.Bold);
@@ -110,26 +120,7 @@ public class GameplayView : UserControl, IAppState
 
     private void PreparePlay()
     {
-        foreach (var note in chart.Notes)
-        {
-            note.IsHit = false;
-            note.LastHitTimeMs = 0;
-            
-            // オプション適用
-            if (noteMod == Utils.ConfigManager.NoteMod.Abekobe)
-            {
-                if (note.Type == NoteType.Don) note.Type = NoteType.Ka;
-                else if (note.Type == NoteType.Ka) note.Type = NoteType.Don;
-                else if (note.Type == NoteType.BigDon) note.Type = NoteType.BigKa;
-                else if (note.Type == NoteType.BigKa) note.Type = NoteType.BigDon;
-            }
-            // きまぐれ/でたらめ (簡易)
-            Random rng = new Random();
-            if (noteMod == Utils.ConfigManager.NoteMod.Kimagure && rng.NextDouble() < 0.2)
-                note.Type = (note.Type == NoteType.Don || note.Type == NoteType.BigDon) ? NoteType.Ka : NoteType.Don;
-            if (noteMod == Utils.ConfigManager.NoteMod.Detarame && rng.NextDouble() < 0.5)
-                note.Type = (note.Type == NoteType.Don || note.Type == NoteType.BigDon) ? NoteType.Ka : NoteType.Don;
-        }
+        chart.ApplyGameOptions(noteMod, isDoron);
 
         isStartingDelay = true;
         playStopwatch.Restart();
@@ -145,7 +136,7 @@ public class GameplayView : UserControl, IAppState
     {
         if (e.KeyCode == Keys.Escape)
         {
-            Exit();
+            PauseRequested?.Invoke();
             return;
         }
 
@@ -217,7 +208,7 @@ public class GameplayView : UserControl, IAppState
 
         if (activeRoll != null)
         {
-            scoringSystem.AddScore(Judgment.Perfect, false);
+            scoringSystem.AddScore(Judgment.Perfect, false, activeRoll.IsGogo);
             TriggerComboAnimation();
             return;
         }
@@ -228,16 +219,23 @@ public class GameplayView : UserControl, IAppState
         foreach (var note in chart.Notes)
         {
             if (note.IsHit) continue;
-            if (note.Type > NoteType.BigKa) continue;
-            
+            // Branch filtering: only process notes from current branch
+            if (note.Branch != currentBranch) continue;
+
+            // For hit detection, we process Don/Ka type notes and balloons
+            // Rolls are handled separately via their TimeMs/EndTimeMs
+            if (note.Type > NoteType.BigKa && note.Type != NoteType.Balloon) continue;
+
             double diff = currentTime - note.TimeMs;
-            
-            if (Math.Abs(diff) <= JudgmentSystem.BadWindowMs)
+
+            if (Math.Abs(diff) <= JudgmentSystem.GoodWindowMs)
             {
                 bool isNoteDon = (note.Type == NoteType.Don || note.Type == NoteType.BigDon);
                 bool isNoteKa = (note.Type == NoteType.Ka || note.Type == NoteType.BigKa);
-                
-                if ((isDon && isNoteDon) || (!isDon && isNoteKa))
+                // Balloons can be hit as either don or ka (they don't have a intrinsic type)
+                bool isBalloon = (note.Type == NoteType.Balloon);
+
+                if ((isDon && isNoteDon) || (!isDon && isNoteKa) || isBalloon)
                 {
                     if (Math.Abs(diff) < minDiff)
                     {
@@ -250,25 +248,77 @@ public class GameplayView : UserControl, IAppState
 
         if (closestNote != null)
         {
-            double diff = currentTime - closestNote.TimeMs;
-            var judgment = judgmentSystem.Judge(diff);
-            
-            closestNote.IsHit = true;
-            if (judgment != Judgment.None)
+            // Handle balloons specially - they use hit counting instead of instant hit
+            if (closestNote.Type == NoteType.Balloon)
             {
-                bool isBigNote = (closestNote.Type == NoteType.BigDon || closestNote.Type == NoteType.BigKa);
-                scoringSystem.AddScore(judgment, isBigNote);
-                
-                string text = judgment switch { Judgment.Perfect => "良", Judgment.Good => "可", Judgment.Miss => "不可", _ => "" };
-                Color color = judgment switch { Judgment.Perfect => Color.Gold, Judgment.Good => Color.White, Judgment.Miss => Color.DeepSkyBlue, _ => Color.Black };
-                activeJudgments.Add(new Models.JudgmentDisplay(text, color, this.ClientSize.Height / 2f - 100));
+                // Increment balloon hit counter
+                closestNote.BalloonHitCount++;
 
-                // コンボ加算アニメーション
-                if (judgment == Judgment.Perfect || judgment == Judgment.Good)
+                // Play hit sound
+                sePath = @"Theme\default\sound\dong.wav";
+                audioManager.PlaySoundEffect(sePath);
+
+                // Check if balloon should break
+                if (closestNote.BalloonHitCount >= closestNote.BalloonRequiredHits)
                 {
+                    // Balloon breaks
+                    closestNote.IsHit = true;
+                    scoringSystem.AddScore(Judgment.BalloonBreak, false, closestNote.IsGogo);
+
+                    // Visual feedback for break
+                    string text = "破裂";
+                    Color color = Color.Orange;
+                    activeJudgments.Add(new Models.JudgmentDisplay(text, color, this.ClientSize.Height / 2f - 100));
+
+                    // Combo counts as perfect for balloon break
                     TriggerComboAnimation();
                 }
+                else
+                {
+                    // Balloon hit but not broken yet
+                    scoringSystem.AddScore(Judgment.Balloon, false, closestNote.IsGogo);
 
+                    // Visual feedback for hit
+                    string text = $"風船 ({closestNote.BalloonHitCount}/{closestNote.BalloonRequiredHits})";
+                    Color color = Color.Pink;
+                    activeJudgments.Add(new Models.JudgmentDisplay(text, color, this.ClientSize.Height / 2f - 100));
+                }
+            }
+            else
+            {
+                // Handle regular notes (Don/Ka)
+                double diff = currentTime - closestNote.TimeMs;
+                var judgment = judgmentSystem.Judge(diff);
+
+                closestNote.IsHit = true;
+                if (judgment != Judgment.None)
+                {
+                    bool isBigNote = (closestNote.Type == NoteType.BigDon || closestNote.Type == NoteType.BigKa);
+                    scoringSystem.AddScore(judgment, isBigNote, closestNote.IsGogo);
+
+                    string text = judgment switch
+                    {
+                        Judgment.Perfect => "良",
+                        Judgment.Good    => "可",
+                        Judgment.Miss    => "不可",
+                        _ => ""
+                    };
+                    Color color = judgment switch
+                    {
+                        Judgment.Perfect => Color.Gold,
+                        Judgment.Good    => Color.White,
+                        Judgment.Miss    => Color.DeepSkyBlue,
+                        _ => Color.Black
+                    };
+                    activeJudgments.Add(new Models.JudgmentDisplay(text, color, this.ClientSize.Height / 2f - 100));
+
+                    // コンボ加算アニメーション
+                    if (judgment == Judgment.Perfect || judgment == Judgment.Good)
+                    {
+                        TriggerComboAnimation();
+                    }
+
+                }
             }
         }
     }
@@ -291,7 +341,7 @@ public class GameplayView : UserControl, IAppState
         double systemTimeMs = playStopwatch.Elapsed.TotalMilliseconds;
         double totalElapsedMs = systemTimeMs - 2000.0;
         
-        double audioStartTimeMs = (chart.WaveOffsetMs < 0) ? -chart.WaveOffsetMs : 0;
+        double audioStartTimeMs = 0;
 
         if (isStartingDelay && totalElapsedMs >= audioStartTimeMs)
         {
@@ -303,13 +353,19 @@ public class GameplayView : UserControl, IAppState
         double chartTime;
         if (isStartingDelay)
         {
-            chartTime = totalElapsedMs + chart.WaveOffsetMs;
+            // Use simulated time during countdown (equivalent to audio position time)
+            chartTime = totalElapsedMs - chart.WaveOffsetMs + Utils.ConfigManager.InputAdjustTimeMs;
         }
         else
         {
-            double playbackSpeed = Utils.ConfigManager.PlaybackSpeed;
-            double timeSinceAudioStart = (systemTimeMs - audioStartTimeSystemMs) * playbackSpeed;
-            chartTime = timeSinceAudioStart + chart.WaveOffsetMs;
+            // Use actual audio playback position instead of estimating from system time
+            double audioPositionSeconds = 0;
+            if (audioStream != 0)
+            {
+                audioPositionSeconds = audioManager.GetPositionSeconds(audioStream);
+            }
+            double timeSinceAudioStart = audioPositionSeconds * 1000.0; // Convert to milliseconds
+            chartTime = timeSinceAudioStart - chart.WaveOffsetMs + Utils.ConfigManager.InputAdjustTimeMs;
 
             var state = ManagedBass.Bass.ChannelIsActive(audioStream);
             if (state == ManagedBass.PlaybackState.Stopped)
@@ -320,10 +376,10 @@ public class GameplayView : UserControl, IAppState
         }
 cachedCurrentTimeMs = chartTime + Utils.ConfigManager.JudgeOffset;
 
-currentLyric = chart.Lyrics.LastOrDefault(l => l.TimeMs <= cachedCurrentTimeMs)?.Text ?? "";
+currentLyric = chart.GetCurrentLyric(cachedCurrentTimeMs);
 
-var nextNote = chart.Notes.FirstOrDefault(n => !n.IsHit && n.TimeMs >= cachedCurrentTimeMs);
-if (nextNote != null) currentBranch = nextNote.Branch;
+var branch = chart.GetNextNoteBranch(cachedCurrentTimeMs);
+if (branch.HasValue) currentBranch = branch.Value;
 
 if (combobounces < 90)
 {
@@ -337,13 +393,19 @@ activeJudgments.RemoveAll(j => j.Timer.ElapsedMilliseconds > Models.JudgmentDisp
         foreach (var note in chart.Notes)
         {
             if (note.IsHit) continue;
-            
+            // Branch filtering: only process notes from current branch
+            if (note.Branch != currentBranch) continue;
+
+            // Time-based culling: skip notes that are too far in past/future
+            double diff = note.TimeMs - cachedCurrentTimeMs;
+            if (diff > 20000.0 || diff < -1000.0) continue;
+
             if (note.Type <= NoteType.BigKa)
             {
-                if (cachedCurrentTimeMs > note.TimeMs + JudgmentSystem.BadWindowMs)
+                if (cachedCurrentTimeMs > note.TimeMs + JudgmentSystem.GoodWindowMs)
                 {
                     note.IsHit = true;
-                    scoringSystem.AddScore(Judgment.Miss, false);
+                    scoringSystem.AddScore(Judgment.Miss, false, note.IsGogo);
                 }
                 else if (isAutoplayEnabled && cachedCurrentTimeMs >= note.TimeMs)
                 {
@@ -351,8 +413,8 @@ activeJudgments.RemoveAll(j => j.Timer.ElapsedMilliseconds > Models.JudgmentDisp
                     string sePath = (note.Type == NoteType.Don || note.Type == NoteType.BigDon) ? @"Theme\default\sound\dong.wav" : @"Theme\default\sound\ka.wav";
                     audioManager.PlaySoundEffect(sePath);
                     bool isBigNote = (note.Type == NoteType.BigDon || note.Type == NoteType.BigKa);
-                    scoringSystem.AddScore(Judgment.Perfect, isBigNote);
-                    
+                    scoringSystem.AddScore(Judgment.Perfect, isBigNote, note.IsGogo);
+
                     // Simulate input effect for Autoplay
                     if (cachedCurrentTimeMs - lastAutoplayHitTimeMs > 1000)
                     {
@@ -376,7 +438,7 @@ activeJudgments.RemoveAll(j => j.Timer.ElapsedMilliseconds > Models.JudgmentDisp
                     TriggerComboAnimation();
                 }
             }
-            else if (note.Type == NoteType.Roll || note.Type == NoteType.BigRoll || note.Type == NoteType.Balloon)
+            else if (note.Type == NoteType.Roll || note.Type == NoteType.BigRoll)
             {
                 if (cachedCurrentTimeMs >= note.TimeMs && cachedCurrentTimeMs <= note.EndTimeMs)
                 {
@@ -388,9 +450,7 @@ activeJudgments.RemoveAll(j => j.Timer.ElapsedMilliseconds > Models.JudgmentDisp
                             note.LastHitTimeMs = cachedCurrentTimeMs;
                             audioManager.PlaySoundEffect(@"Theme\default\sound\dong.wav");
                             bool isBigNote = (note.Type == NoteType.BigRoll);
-                            scoringSystem.AddScore(Judgment.Perfect, isBigNote);
-                            TriggerComboAnimation();
-                            
+
                             // Simulate roll effect
                             if (isRightDonPressed)
                             {
@@ -402,6 +462,9 @@ activeJudgments.RemoveAll(j => j.Timer.ElapsedMilliseconds > Models.JudgmentDisp
                                 isRightDonPressed = true; rightDonStopwatch.Restart();
                                 isLeftDonPressed = false;
                             }
+
+                            // Score the roll hit
+                            scoringSystem.AddScore(Judgment.Perfect, isBigNote, note.IsGogo);
                         }
                     }
                 }
@@ -410,10 +473,56 @@ activeJudgments.RemoveAll(j => j.Timer.ElapsedMilliseconds > Models.JudgmentDisp
                     note.IsHit = true;
                 }
             }
+            else if (note.Type == NoteType.Balloon)
+            {
+                // Balloon processing - balloons require multiple hits to break
+                if (cachedCurrentTimeMs >= note.TimeMs && cachedCurrentTimeMs <= note.EndTimeMs)
+                {
+                    // Balloon is active - check for hits
+                    if (isAutoplayEnabled && cachedCurrentTimeMs >= note.TimeMs)
+                    {
+                        // Autoplay: hit balloons continuously
+                        double interval = (60000.0 / note.Bpm) / 4.0; // 16th note interval
+                        if (cachedCurrentTimeMs >= note.LastHitTimeMs + interval)
+                        {
+                            note.LastHitTimeMs = cachedCurrentTimeMs;
+                            audioManager.PlaySoundEffect(@"Theme\default\sound\dong.wav");
+
+                            // Increment hit counter for balloon
+                            note.BalloonHitCount++;
+
+                            // Check if balloon should break
+                            if (note.BalloonHitCount >= note.BalloonRequiredHits)
+                            {
+                                // Balloon breaks
+                                note.IsHit = true;
+                                scoringSystem.AddScore(Judgment.BalloonBreak, false, note.IsGogo);
+                            }
+                            else
+                            {
+                                // Balloon hit but not broken yet
+                                scoringSystem.AddScore(Judgment.Balloon, false, note.IsGogo);
+                            }
+                        }
+                    }
+                    else if (!isAutoplayEnabled)
+                    {
+                        // Manual play: check for input (this would be handled in ProcessHit)
+                        // Balloons don't auto-complete on time - they require hits
+                    }
+                }
+                else if (cachedCurrentTimeMs > note.EndTimeMs)
+                {
+                    // Balloon expired without enough hits - count as miss
+                    note.IsHit = true;
+                    scoringSystem.AddScore(Judgment.Miss, false, note.IsGogo);
+                }
+            }
         }
     }
 
     public event Action<PlayResult>? SongFinished;
+public event Action? PauseRequested;
 
     private void HandleSongFinished()
     {
@@ -575,8 +684,11 @@ activeJudgments.RemoveAll(j => j.Timer.ElapsedMilliseconds > Models.JudgmentDisp
         g.DrawString(songTitle, titleFont, Brushes.White, Width - titleSize.Width - 10, 10);
 
         // 分岐表示
-        string branchText = currentBranch switch { Models.BranchType.Normal => "普通", Models.BranchType.Professional => "玄人", Models.BranchType.Master => "達人", _ => "" };
-        g.DrawString(branchText, branchFont, new SolidBrush(Color.FromArgb(128, Color.White)), 260, 110);
+        if (chart.HasBranches)
+        {
+            string branchText = currentBranch switch { Models.BranchType.Normal => "普通", Models.BranchType.Professional => "玄人", Models.BranchType.Master => "達人", _ => "" };
+            g.DrawString(branchText, branchFont, new SolidBrush(Color.FromArgb(128, Color.White)), 260, 110);
+        }
 
         // 歌詞描画
         DrawLyric(g);

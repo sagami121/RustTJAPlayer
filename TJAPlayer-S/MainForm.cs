@@ -7,6 +7,7 @@ using TjaPlayer.Audio;
 using TjaPlayer.Models;
 using TjaPlayer.Views;
 using TjaPlayer.Gameplay;
+using ManagedBass;
 
 namespace TjaPlayer;
 
@@ -167,22 +168,80 @@ public partial class MainForm : Form
     {
         Controls.Clear();
         var diffSelectView = new DifficultySelectView(score, audioManager);
-        diffSelectView.DifficultySelected += (chart) => SwitchToGameplay(chart, score.Title);
+        diffSelectView.DifficultySelected += (chart) => SwitchToGameplay(chart, score.Title, score);
         diffSelectView.RequestedExit += () => ReturnToSongSelect();
         stateManager?.ChangeState(diffSelectView);
         Controls.Add(diffSelectView);
         diffSelectView.Focus();
     }
 
-    public void SwitchToGameplay(TjaChart chart, string songTitle)
+    public void SwitchToGameplay(TjaChart chart, string songTitle, Score score)
     {
         Controls.Clear();
-        var gameplayView = new GameplayView(chart, audioManager, songTitle);
+        var gameplayView = new GameplayView(chart, audioManager, songTitle, score.ScoreInit, score.ScoreDiff);
         gameplayView.SongFinished += (result) => SwitchToResult(result);
         gameplayView.RequestedExit += () => ReturnToSongSelect(); // 追加
+    gameplayView.PauseRequested += () => SwitchToPause(gameplayView); // 一時停止処理を追加
         stateManager?.ChangeState(gameplayView);
         Controls.Add(gameplayView);
         gameplayView.Focus();
+    }
+
+    private void SwitchToPause(GameplayView gameplayView)
+    {
+        Controls.Clear();
+        var pauseView = new PauseView(
+            audioManager,
+            gameplayView.Chart,
+            gameplayView.SongTitle,
+            gameplayView.ScoreInit,
+            gameplayView.ScoreDiff,
+            gameplayView.AudioStream,
+            gameplayView.CurrentChartTimeMs,
+            gameplayView.ScoringSystem,
+            gameplayView.JudgmentSystem);
+        pauseView.ResumeRequested += () => ResumeFromPause(gameplayView);
+        pauseView.RestartRequested += () => RestartFromPause(gameplayView);
+        pauseView.ExitToSongSelectRequested += () => ReturnToSongSelect();
+        stateManager?.ChangeState(pauseView);
+        Controls.Add(pauseView);
+        pauseView.Focus();
+    }
+
+    private void ResumeFromPause(GameplayView gameplayView)
+    {
+        // Resume the audio stream
+        if (gameplayView.AudioStream != 0)
+        {
+            Bass.ChannelPlay(gameplayView.AudioStream);
+        }
+
+        // Switch back to gameplay
+        Controls.Clear();
+        stateManager?.ChangeState(gameplayView);
+        Controls.Add(gameplayView);
+        gameplayView.Focus();
+    }
+
+    private void RestartFromPause(GameplayView gameplayView)
+    {
+        // Stop the current audio
+        if (gameplayView.AudioStream != 0)
+        {
+            audioManager.StopTrack(gameplayView.AudioStream);
+        }
+
+        // Restart the game from the beginning
+        // For restart, we create a minimal Score object with default values
+        var score = new Score
+        {
+            Title = gameplayView.SongTitle,
+            ScoreInit = 0,
+            ScoreDiff = 0,
+            Charts = new System.Collections.Generic.Dictionary<string, TjaChart>()
+        };
+
+        SwitchToGameplay(gameplayView.Chart, gameplayView.SongTitle, score);
     }
 
     public void SwitchToResult(PlayResult result)

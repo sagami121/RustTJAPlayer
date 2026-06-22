@@ -5,8 +5,9 @@ using System.Linq;
 using System.Numerics;
 using TjaPlayer.Models;
 using TjaPlayer.Utils;
+using TjaPlayer.Gameplay;
 
-namespace TjaPlayer.Gameplay;
+namespace TjaPlayer.Models;
 
 public class TjaParser
 {
@@ -29,6 +30,7 @@ public class TjaParser
         double globalBpm = 130.0;
         string globalWave = "";
         double globalOffset = 0.0;
+        int globalLevel = 1; // Default level
 
         foreach (var line in lines)
         {
@@ -43,12 +45,34 @@ public class TjaParser
             {
                 globalWave = line.Substring(5).Trim();
             }
+            else if (line.StartsWith("MOVIE:", StringComparison.OrdinalIgnoreCase))
+            {
+                score.BackgroundVideo = line.Substring(6).Trim();
+            }
+            else if (line.StartsWith("LEVEL:", StringComparison.OrdinalIgnoreCase))
+            {
+                if (int.TryParse(line.Substring(6).Trim(), out int level))
+                {
+                    // Store level to apply to charts later
+                    globalLevel = level;
+                }
+            }
             else if (line.StartsWith("OFFSET:", StringComparison.OrdinalIgnoreCase))
             {
                 if (double.TryParse(line.Substring(7).Trim(), out double offset))
                 {
                     globalOffset = offset * 1000.0;
                 }
+            }
+            else if (line.StartsWith("SCOREINIT:", StringComparison.OrdinalIgnoreCase))
+            {
+                if (int.TryParse(line.Substring(10).Trim(), out int value))
+                    score.ScoreInit = value;
+            }
+            else if (line.StartsWith("SCOREDIFF:", StringComparison.OrdinalIgnoreCase))
+            {
+                if (int.TryParse(line.Substring(10).Trim(), out int value))
+                    score.ScoreDiff = value;
             }
             else if (line.StartsWith("#START", StringComparison.OrdinalIgnoreCase)) break;
         }
@@ -58,8 +82,8 @@ public class TjaParser
             globalWave = CompanionFileFinder.FindFileName(score.DirectoryPath, Path.GetFileName(filePath), globalWave);
         }
 
-        score.Charts = ParseTjaFile(lines, score.DirectoryPath, globalBpm, globalWave, globalOffset);
-        
+        score.Charts = ParseTjaFile(lines, score.DirectoryPath, globalBpm, globalWave, globalOffset, globalLevel);
+
         if (score.Charts.Count > 0)
         {
             score.BaseBpm = globalBpm;
@@ -108,7 +132,7 @@ public class TjaParser
         return expandedLines.ToArray();
     }
 
-    private static Dictionary<string, TjaChart> ParseTjaFile(string[] lines, string directory, double globalBpm, string globalWave, double globalOffset)
+    private static Dictionary<string, TjaChart> ParseTjaFile(string[] lines, string directory, double globalBpm, string globalWave, double globalOffset, int globalLevel)
     {
         var charts = new Dictionary<string, TjaChart>();
         string currentCourse = "Oni";
@@ -122,7 +146,10 @@ public class TjaParser
             else if (line.StartsWith("#END", StringComparison.OrdinalIgnoreCase))
             {
                 parsingChart = false;
-                charts[currentCourse] = ParseChart(currentCourseLines.ToArray(), directory, globalBpm, globalWave, globalOffset);
+                var chart = ParseChart(currentCourseLines.ToArray(), directory, globalBpm, globalWave, globalOffset);
+                chart.CourseName = currentCourse;
+                chart.Level = globalLevel;
+                charts[currentCourse] = chart;
             }
             else if (parsingChart) currentCourseLines.Add(line);
         }
@@ -140,6 +167,7 @@ public class TjaParser
         public bool BarlineVisible = true;
         public Stack<bool> SkipStack = new Stack<bool>();
         public bool IsSkipping => SkipStack.Count > 0 && SkipStack.Peek();
+        public bool HasBranches = false; // Track if any branch commands encountered
     }
 
     private delegate void CommandHandler(string argument, ParserState state, ref double currentAbsTimeMs, TjaChart chart, ref Note? activeRollNote);
@@ -150,7 +178,7 @@ public class TjaParser
         chart.DirectoryPath = directory;
         chart.AudioFileName = globalWave;
         chart.WaveOffsetMs = globalOffset;
-        
+
         var state = new ParserState { CurrentBpm = globalBpm };
         double currentAbsTimeMs = 0.0;
 
@@ -182,14 +210,14 @@ public class TjaParser
         handlers["#GOGOEND"] = (string arg, ParserState s, ref double t, TjaChart c, ref Note? r) => s.IsGogo = false;
         handlers["#DELAY"] = (string arg, ParserState s, ref double t, TjaChart c, ref Note? r) => t += CTExpression.Evaluate(arg, 0) * 1000.0;
         handlers["#LYRIC"] = (string arg, ParserState s, ref double t, TjaChart c, ref Note? r) => c.Lyrics.Add(new LyricEvent { TimeMs = t, Text = arg });
-        
+
         // 分岐命令ハンドラ
-        handlers["#BRANCHSTART"] = (string arg, ParserState s, ref double t, TjaChart c, ref Note? r) => { /* 条件解析は複雑なため後回し */ };
-        handlers["#N"] = (string arg, ParserState s, ref double t, TjaChart c, ref Note? r) => s.CurrentBranch = BranchType.Normal;
-        handlers["#E"] = (string arg, ParserState s, ref double t, TjaChart c, ref Note? r) => s.CurrentBranch = BranchType.Professional;
-        handlers["#M"] = (string arg, ParserState s, ref double t, TjaChart c, ref Note? r) => s.CurrentBranch = BranchType.Master;
-        handlers["#BRANCHEND"] = (string arg, ParserState s, ref double t, TjaChart c, ref Note? r) => s.CurrentBranch = BranchType.Normal;
-        
+        handlers["#BRANCHSTART"] = (string arg, ParserState s, ref double t, TjaChart c, ref Note? r) => { s.HasBranches = true; /* 条件解析は複雑なため後回し */ };
+        handlers["#N"] = (string arg, ParserState s, ref double t, TjaChart c, ref Note? r) => { s.HasBranches = true; s.CurrentBranch = BranchType.Normal; };
+        handlers["#E"] = (string arg, ParserState s, ref double t, TjaChart c, ref Note? r) => { s.HasBranches = true; s.CurrentBranch = BranchType.Professional; };
+        handlers["#M"] = (string arg, ParserState s, ref double t, TjaChart c, ref Note? r) => { s.HasBranches = true; s.CurrentBranch = BranchType.Master; };
+        handlers["#BRANCHEND"] = (string arg, ParserState s, ref double t, TjaChart c, ref Note? r) => { s.HasBranches = true; s.CurrentBranch = BranchType.Normal; };
+
         handlers["#IF"] = (string arg, ParserState s, ref double t, TjaChart c, ref Note? r) => {
             bool parentIsSkipping = s.IsSkipping;
             bool condition = CTExpression.Evaluate(arg, 0) != 0;
@@ -217,8 +245,8 @@ public class TjaParser
                 string command = spaceIndex >= 0 ? trimmed.Substring(0, spaceIndex) : trimmed;
                 string argument = spaceIndex >= 0 ? trimmed.Substring(spaceIndex + 1).Trim() : "";
 
-                bool isStructural = command.Equals("#IF", StringComparison.OrdinalIgnoreCase) || 
-                                    command.Equals("#ELSE", StringComparison.OrdinalIgnoreCase) || 
+                bool isStructural = command.Equals("#IF", StringComparison.OrdinalIgnoreCase) ||
+                                    command.Equals("#ELSE", StringComparison.OrdinalIgnoreCase) ||
                                     command.Equals("#ENDIF", StringComparison.OrdinalIgnoreCase);
 
                 if (state.IsSkipping && !isStructural) continue;
@@ -250,6 +278,7 @@ public class TjaParser
             ProcessPendingNotes(chart, pendingNotes, ref currentAbsTimeMs, state, ref activeRollNote);
         }
 
+        chart.HasBranches = state.HasBranches;
         return chart;
     }
 
@@ -260,12 +289,12 @@ public class TjaParser
         int totalNotes = pendingNotes.Count;
         double timePerNote = totalNotes > 0 ? barDurationMs / totalNotes : 0;
 
-        chart.Barlines.Add(new Barline 
-        { 
-            TimeMs = currentAbsTimeMs, 
+        chart.Barlines.Add(new Barline
+        {
+            TimeMs = currentAbsTimeMs,
             ScrollValue = state.ScrollValue,
             Bpm = effectiveBpm,
-            IsVisible = state.BarlineVisible 
+            IsVisible = state.BarlineVisible
         });
 
         for (int i = 0; i < totalNotes; i++)
@@ -277,10 +306,10 @@ public class TjaParser
 
             if (pNote.NoteChar == '5' || pNote.NoteChar == '6' || pNote.NoteChar == '8')
             {
-                activeRollNote = new Note 
-                { 
-                    Type = (NoteType)(pNote.NoteChar - '0'), 
-                    TimeMs = noteTime, 
+                activeRollNote = new Note
+                {
+                    Type = (NoteType)(pNote.NoteChar - '0'),
+                    TimeMs = noteTime,
                     ScrollValue = pNote.Scroll,
                     Bpm = pNote.Bpm,
                     IsGogo = state.IsGogo,
@@ -295,10 +324,10 @@ public class TjaParser
             }
             else if (pNote.NoteChar >= '1' && pNote.NoteChar <= '4')
             {
-                chart.Notes.Add(new Note 
-                { 
-                    Type = (NoteType)(pNote.NoteChar - '0'), 
-                    TimeMs = noteTime, 
+                chart.Notes.Add(new Note
+                {
+                    Type = (NoteType)(pNote.NoteChar - '0'),
+                    TimeMs = noteTime,
                     ScrollValue = pNote.Scroll,
                     Bpm = pNote.Bpm,
                     IsGogo = state.IsGogo,
